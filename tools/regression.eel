@@ -9,38 +9,38 @@ __slider();
 printf("T1: chord module - note-on C3 (factory minor triad)\n");
 slider1 = 1; slider2 = 0; __slider();
 push_midi(0, 0x90, 48, 100);
-__block();
+__block(); __sample();
 dump_midi();          // expect: on 48, 51, 55 @100
 push_midi(0, 0x80, 48, 0);
-__block();
+__block(); __sample();
 dump_midi();          // expect: off 48, 51, 55
 
 printf("T3: per-voice velocity scaling [200,50,100] at input v64\n");
 chV[48*8+0] = 200; chV[48*8+1] = 50; chV[48*8+2] = 100;
 push_midi(0, 0x90, 48, 64);
-__block();
+__block(); __sample();
 dump_midi();          // expect: 127, 32, 64
 push_midi(0, 0x80, 48, 0);
-__block();
+__block(); __sample();
 dump_midi();
 
 printf("T4: voice lock (pedal tone) on voice 2\n");
 lkOn[1] = 1; lkN[1] = 40;
 push_midi(0, 0x90, 48, 100);
-__block();
+__block(); __sample();
 dump_midi();          // expect: 48, 40, 55
 push_midi(0, 0x80, 48, 0);
-__block();
+__block(); __sample();
 dump_midi();
 lkOn[1] = 0;
 
 printf("T5: global transpose +7\n");
 trans = 7;
 push_midi(0, 0x90, 48, 100);
-__block();
+__block(); __sample();
 dump_midi();          // expect: 55, 58, 62
 push_midi(0, 0x80, 48, 0);
-__block();
+__block(); __sample();
 dump_midi();
 trans = 0;
 
@@ -49,13 +49,13 @@ slider1 = 0; slider2 = 1; __slider();
 push_midi(0, 0x90, 48, 100);
 push_midi(0, 0x90, 52, 100);
 push_midi(0, 0x90, 55, 100);
-__block();
+__block(); __sample();
 tempo = 120; srate = 44100; samplesblock = 1;
 play_state = 1; beat_position = 0;
 k = 0;
 while (k < 8) (
   beat_position = k * 0.25;
-  __block();
+  __block(); __sample();
   __sample();
   dump_midi();        // expect: 48, 52, 55, 60, 64, 67, 72, 76
   k += 1;
@@ -63,7 +63,7 @@ while (k < 8) (
 push_midi(0, 0x80, 48, 0);
 push_midi(0, 0x80, 52, 0);
 push_midi(0, 0x80, 55, 0);
-__block();
+__block(); __sample();
 __sample();
 dump_midi();          // expect: off for last sounding note
 
@@ -76,13 +76,13 @@ lenG[0*8+0] = 3;
 push_midi(0, 0x90, 48, 100);
 push_midi(0, 0x90, 52, 100);
 push_midi(0, 0x90, 55, 100);
-__block();
+__block(); __sample();
 play_state = 1; beat_position = 100;
-__block();
+__block(); __sample();
 k = 0;
 while (k < 3) (
   beat_position = 100 + k * 0.25;
-  __block();
+  __block(); __sample();
   __sample();
   dump_midi();        // expect: 52,55,60 / 55,60,64 / 48,52,55
   k += 1;
@@ -90,7 +90,7 @@ while (k < 3) (
 push_midi(0, 0x80, 48, 0);
 push_midi(0, 0x80, 52, 0);
 push_midi(0, 0x80, 55, 0);
-__block();
+__block(); __sample();
 __sample();
 dump_midi();
 chmG[0] = 0;
@@ -104,19 +104,19 @@ while (k < 16) ( gatG[k] = 50; k += 1; );
 push_midi(0, 0x90, 48, 100);
 push_midi(0, 0x90, 52, 100);
 push_midi(0, 0x90, 55, 100);
-__block();
+__block(); __sample();
 play_state = 1; beat_position = 200;
-__block();
+__block(); __sample();
 __sample();
 dump_midi();          // expect: on (any pitch)
 beat_position = 200.125;
-__block();
+__block(); __sample();
 __sample();
 dump_midi();          // expect: off (gate 50% of a 16th)
 push_midi(0, 0x80, 48, 0);
 push_midi(0, 0x80, 52, 0);
 push_midi(0, 0x80, 55, 0);
-__block();
+__block(); __sample();
 __sample();
 dump_midi();
 k = 0;
@@ -128,11 +128,11 @@ curSlot = 60;
 push_midi(0, 0x90, 60, 100);
 push_midi(0, 0x90, 64, 100);
 push_midi(0, 0x90, 67, 100);
-__block();
+__block(); __sample();
 push_midi(0, 0x80, 60, 0);
 push_midi(0, 0x80, 64, 0);
 push_midi(0, 0x80, 67, 0);
-__block();
+__block(); __sample();
 printf("  slot60 = [%d,%d,%d] curSlot=%d (expect 60,64,67 / 61)\n",
        chN[60*8], chN[60*8+1], chN[60*8+2], curSlot);
 lrn = 0; lrnMode = 0;
@@ -140,46 +140,46 @@ lrn = 0; lrnMode = 0;
 printf("T13: note constraint - block C then shift up\n");
 conG[0] = 1;
 push_midi(0, 0x90, 48, 100);
-__block();
+__block(); __sample();
 play_state = 1; beat_position = 300;
-__block();
+__block(); __sample();
 __sample();
 dump_midi();          // expect: nothing (C blocked)
 push_midi(0, 0x80, 48, 0);
-__block(); __sample();
+__block(); __sample(); __sample();
 conG[0] = 2;
 push_midi(0, 0x90, 48, 100);
-__block();
+__block(); __sample();
 play_state = 1; beat_position = 301;
-__block();
+__block(); __sample();
 __sample();
 dump_midi();          // expect: 49 (block -> up)
 push_midi(0, 0x80, 48, 0);
-__block(); __sample();
+__block(); __sample(); __sample();
 conG[0] = 0;
 
 printf("T14: octave lane +1 on step 0\n");
 octG[0*16+0] = 1;
 push_midi(0, 0x90, 60, 100);
-__block();
+__block(); __sample();
 play_state = 1; beat_position = 400;
-__block();
+__block(); __sample();
 __sample();
 dump_midi();          // expect: 72
 push_midi(0, 0x80, 60, 0);
-__block(); __sample();
+__block(); __sample(); __sample();
 octG[0*16+0] = 0;
 
 printf("T15: harmony lane +7 on step 0\n");
 harG[0*16+0] = 7;
 push_midi(0, 0x90, 60, 100);
-__block();
+__block(); __sample();
 play_state = 1; beat_position = 500;
-__block();
+__block(); __sample();
 __sample();
 dump_midi();          // expect: 60 and 67
 push_midi(0, 0x80, 60, 0);
-__block(); __sample();
+__block(); __sample(); __sample();
 harG[0*16+0] = 0;
 
 printf("T18: down shape + reset arrow at step 2\n");
@@ -189,13 +189,13 @@ resG[0*16+2] = 1;
 push_midi(0, 0x90, 48, 100);
 push_midi(0, 0x90, 52, 100);
 push_midi(0, 0x90, 55, 100);
-__block();
+__block(); __sample();
 play_state = 1; beat_position = 800;
-__block();
+__block(); __sample();
 k = 0;
 while (k < 4) (
   beat_position = 800 + k * 0.25;
-  __block();
+  __block(); __sample();
   __sample();
   dump_midi();        // expect: 55, 52, 55 (reset), 52
   k += 1;
@@ -203,7 +203,7 @@ while (k < 4) (
 push_midi(0, 0x80, 48, 0);
 push_midi(0, 0x80, 52, 0);
 push_midi(0, 0x80, 55, 0);
-__block(); __sample();
+__block(); __sample(); __sample();
 resG[0*16+2] = 0;
 k = 0;
 while (k < 16) ( notG[k] = 8; k += 1; );
