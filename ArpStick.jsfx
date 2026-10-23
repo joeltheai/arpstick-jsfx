@@ -1781,3 +1781,540 @@ file_avail(0) > 8 ? (
   file_var(0, watchOn);
 );
 
+// ============================================================================
+// GUI helpers (defined before @gfx)
+// ============================================================================
+@gfx
+sc = min(gfx_w / 960, gfx_h / 600);
+sc < 0.4 ? sc = 0.4;
+sc > 2 ? sc = 2;
+ox = (gfx_w - 960 * sc) / 2;
+oy = (gfx_h - 600 * sc) / 2;
+
+frect(0, 0, gfx_w, gfx_h, 13, 15, 19);
+
+mx = (mouse_x - ox) / sc;
+my = (mouse_y - oy) / sc;
+mc = (mouse_cap & 8) || (mouse_cap & 64) ? 1 : 0;   // ctrl/cmd
+msh = mouse_cap & 16 ? 1 : 0;                        // shift
+mal = mouse_cap & 32 ? 1 : 0;                        // alt
+
+// ---------- mouse state machine ----------
+mouse_cap & 1 ? (
+  !mousePrev ? (
+    mousePrev = 1;
+    dragCtl = 0;
+    dragMy0 = my;
+    dragV0 = 0;
+    dragVoice = -1;
+    menuOpen ? (
+      // menu click
+      cnt2 = menuOpen == 1 ? 22 : menuOpen == 2 ? 15 : 10;
+      rows2 = ceil(cnt2 / 2);
+      cols2 = menuOpen == 3 ? 1 : 2;
+      mx >= menuX && mx < menuX + cols2*150 && my >= menuY && my < menuY + rows2*14 ? (
+        col2 = floor((mx - menuX) / 150);
+        row2 = floor((my - menuY) / 14);
+        idx2 = col2 * rows2 + row2;
+        idx2 < cnt2 && !(menuOpen == 1 && (idx2 == 6 || idx2 == 12 || idx2 == 16 || idx2 == 20)) ? (
+          doMenuAction(menuOpen, idx2);
+        );
+      );
+      menuOpen = 0;
+    ) : (
+      id2 = hitTest(mx, my);
+      id2 == 40 ? curGraph = hitTab :
+      id2 == 41 ? ( pat = hitLetter; dragPatFrom = hitLetter; dragCtl = 41; ) :
+      id2 == 50 ? (
+        msh ? ( previewChord(hitNote, lastInChan); curSlot = hitNote; ) :
+        mc ? ( // toggle note in current slot
+          f = -1;
+          i = 0;
+          while (i < 8) (
+            chN[curSlot*8+i] == hitNote ? ( f = i; i = 8; );
+            i += 1;
+          );
+          f >= 0 ? ( chN[curSlot*8+f] = -1; ) : (
+            f = 0;
+            while (f < 8) (
+              chN[curSlot*8+f] < 0 ? ( chN[curSlot*8+f] = hitNote; chV[curSlot*8+f] = 100; f = 8; );
+              f += 1;
+            );
+          );
+        ) : (
+          curSlot = hitNote;
+          dragVoice = -1;
+          i = 0;
+          while (i < 8) (
+            chN[curSlot*8+i] == hitNote ? dragVoice = i;
+            i += 1;
+          );
+          dragCtl = 50;
+          dragV0 = hitNote;
+        );
+      ) :
+      id2 == 52 ? keyScroll = max(0, keyScroll - 1) :
+      id2 == 53 ? keyScroll = min(7, keyScroll + 1) :
+      id2 == 6 && mal && curGraph == 0 ? (
+        resG[pat*16+hitCol] = 1 - resG[pat*16+hitCol];
+      ) :
+      id2 == 70 ? ( chOn = 1 - chOn; slider1 = chOn; ) :
+      id2 == 71 ? ( arpOn = 1 - arpOn; slider2 = arpOn; ) :
+      id2 == 72 ? ( latch = 1 - latch; slider4 = latch; ) :
+      id2 == 73 ? retG[pat] = 1 - retG[pat] :
+      id2 == 74 ? lnkG[pat] = 1 - lnkG[pat] :
+      id2 == 75 ? chmG[pat] = 1 - chmG[pat] :
+      id2 == 76 ? ( freeOn = 1 - freeOn; synced = freeOn ? 0 : 1; ) :
+      id2 == 5 ? cdvG[pat*8+curGraph] = (cdvG[pat*8+curGraph] % 8) + 1 :
+      id2 == 60 ? (
+        lrn ? ( lrn = 0; lrnMode = 0; lrnTimer = 0; lrnCnt = 0; ) : (
+          lrn = 1;
+          lrnMode = mal ? 2 : mc ? 3 : 1;
+          lrnTimer = msh ? 1 : 0;
+          lrnCnt = 0;
+          lrnHeld = 0;
+          lrnOffs = 0;
+        );
+      ) :
+      id2 == 61 ? (
+        i = 0;
+        while (i < 8) (
+          ccb[i] = chN[curSlot*8+i];
+          ccb[8+i] = chV[curSlot*8+i];
+          i += 1;
+        );
+      ) :
+      id2 == 62 ? (
+        i = 0;
+        while (i < 8) (
+          chN[curSlot*8+i] = ccb[i];
+          chV[curSlot*8+i] = ccb[8+i];
+          i += 1;
+        );
+      ) :
+      id2 == 63 ? wtfChord() :
+      id2 == 64 ? ( watchOn = 1 - watchOn; watchOn ? ( s2 = 0; while (s2 < 128) ( watB[s2] = 0; s2 += 1; ); ); ) :
+      id2 == 65 ? ( menuOpen = 1; menuX = 8; menuY = 396; ) :
+      id2 == 66 ? ( menuOpen = 2; menuX = 8; menuY = 396; ) :
+      id2 == 83 ? ( menuOpen = 3; menuX = 8; menuY = 396; ) :
+      id2 == 80 ? graphCopy() :
+      id2 == 81 ? graphPaste() :
+      id2 == 82 ? graphRand() :
+      id2 == 90 ? conG[hitPc] = (conG[hitPc] + 1) % 4 :
+      id2 == 91 ? penG[hitDeg] = 1 - penG[hitDeg] :
+      id2 == 92 ? (
+        m2 = mutG[pat];
+        (m2 / pw2[hitCol]) % 2 == 1 ? mutG[pat] = m2 - pw2[hitCol] : mutG[pat] = m2 + pw2[hitCol];
+      ) :
+      id2 == 1 ? ( dragCtl = 1; dragV0 = trans; ) :
+      id2 == 2 ? ( dragCtl = 2; dragV0 = tone; ) :
+      id2 == 3 ? ( dragCtl = 3; dragV0 = ratG[pat]; ) :
+      id2 == 4 ? ( dragCtl = 4; dragV0 = freeHz; ) :
+      id2 == 6 ? dragCtl = 6 :
+      id2 == 7 ? dragCtl = 7 :
+      (id2 >= 10 && id2 < 18) ? ( dragCtl = id2; dragV0 = chN[curSlot*8 + (id2-10)]; ) :
+      (id2 >= 20 && id2 < 28) ? ( dragCtl = id2; dragV0 = chV[curSlot*8 + (id2-20)]; ) :
+      (id2 >= 30 && id2 < 38) ? ( // lock toggle
+        v2 = id2 - 30;
+        lkOn[v2] = 1 - lkOn[v2];
+        lkOn[v2] ? ( lkN[v2] = max(-1, chN[curSlot*8+v2]); );
+      );
+    );
+  ) : (
+    // drag
+    dragCtl == 1 ? ( trans = max(-36, min(36, floor(dragV0 + (dragMy0 - my) / 3))); slider3 = trans; ) :
+    dragCtl == 2 ? ( tone = max(0, min(100, floor(dragV0 + (dragMy0 - my) / 3))); slider5 = tone; ) :
+    dragCtl == 3 ? ratG[pat] = max(0, min(13, floor(dragV0 + (dragMy0 - my) / 5))) :
+    dragCtl == 4 ? freeHz = max(0.05, min(40, dragV0 + (dragMy0 - my) / 30)) :
+    dragCtl == 6 ? (
+      hitCol = floor((mx - 178) / 42);
+      hitCol >= 0 && hitCol < 16 ? setGraphVal(curGraph, hitCol, cellYToVal(curGraph, my));
+    ) :
+    dragCtl == 7 ? (
+      nl = max(1, min(16, floor((mx - 178) / 42 + 0.5)));
+      lnkG[pat] ? (
+        i = 0;
+        while (i < 8) ( lenG[pat*8+i] = nl; i += 1; );
+      ) : lenG[pat*8+curGraph] = nl;
+    ) :
+    dragCtl == 50 ? (
+      dragVoice >= 0 ? chN[curSlot*8+dragVoice] = max(0, min(127, floor(dragV0 + (dragMy0 - my) / 5)));
+    ) :
+    (dragCtl >= 10 && dragCtl < 18) ? (
+      chN[curSlot*8 + (dragCtl-10)] = max(-1, min(127, floor(dragV0 + (dragMy0 - my) / 5)));
+    ) :
+    (dragCtl >= 20 && dragCtl < 28) ? (
+      chV[curSlot*8 + (dragCtl-20)] = max(0, min(200, floor(dragV0 + (dragMy0 - my) / 3)));
+    );
+    dragCtl == 41 ? (
+      id2 = hitTest(mx, my);
+      id2 != 41 ? ( dragCtl = 0; dragPatFrom = -1; );
+    );
+  );
+) : (
+  mousePrev ? (
+    mousePrev = 0;
+    dragCtl == 41 ? (
+      id2 = hitTest(mx, my);
+      id2 == 41 && hitLetter != dragPatFrom && hitLetter >= 0 ? patternCopy(dragPatFrom, hitLetter);
+      dragPatFrom = -1;
+    );
+    dragCtl = 0;
+    dragVoice = -1;
+  );
+);
+
+// ============================================================================
+// draw
+// ============================================================================
+
+// ---------- top bar ----------
+drwText("ArpStick", 8, 2, 14, 200, 205, 215);
+drwText("chord player + pattern arp", 76, 9, 8, 120, 127, 140);
+btn(300, 5, 56, 16, "CHORD", chOn, 100, 205, 120);
+btn(390, 5, 56, 16, "ARP", arpOn, 100, 205, 120);
+btn(480, 5, 56, 16, "LATCH", latch, 255, 150, 60);
+drwText("TONE", 552, 8, 8, 150, 155, 170);
+knob(585, 13, 10, tone, 0, 100);
+drwText("TRANS", 636, 8, 8, 150, 155, 170);
+knob(665, 13, 10, trans, -36, 36);
+#ts = sprintf(#, "%+d", floor(trans));
+drwText(#ts, 674, 6, 8, 200, 205, 215);
+#ts = sprintf(#, "%d%%", floor(tone));
+drwText(#ts, 594, 6, 8, 200, 205, 215);
+
+// ---------- arp section ----------
+frect(px(0), py(26), 960*sc, 364*sc, 20, 23, 29);
+drwText("PATTERNS", 8, 32, 8, 120, 127, 140);
+p = 0;
+while (p < 12) (
+  bx = 8 + (p % 2) * 54;
+  by = 34 + floor(p / 2) * 24;
+  // "non-default" check: any graph data
+  nd = mutG[p] != 0 || ratG[p] != 8 || retG[p] || chmG[p];
+  i = 0;
+  while (i < 16 && !nd) (
+    notG[p*16+i] != -1 ? nd = 1;
+    i += 1;
+  );
+  frect(px(bx), py(by), 46*sc, 18*sc, p == pat ? 30 : 22, p == pat ? 60 : 25, p == pat ? 42 : 32);
+  gfx_r = 45; gfx_g = 50; gfx_b = 60; gfx_a = 1;
+  gfx_rect(px(bx), py(by), 46*sc, 18*sc);
+  dragCtl == 41 && dragPatFrom == p ? ( gfx_r = 255; gfx_g = 220; gfx_b = 80; gfx_a = 1; gfx_rect(px(bx+1), py(by+1), 44*sc, 16*sc); );
+  #pl = sprintf(#, "%c", 65 + p);
+  drwTextC(#pl, bx + 23, by + 3, 10, p == pat ? 230 : nd ? 140 : 90, p == pat ? 240 : nd ? 220 : 90, p == pat ? 250 : nd ? 150 : 100);
+  p += 1;
+);
+#pn = sprintf(#, "Pattern %c", 65 + pat);
+drwText(#pn, 8, 182, 9, 150, 155, 170);
+btn(8, 186, 42, 15, "COPY", 0, 60, 90, 130);
+btn(54, 186, 42, 15, "PASTE", 0, 60, 90, 130);
+btn(100, 186, 42, 15, "RAND", 0, 60, 90, 130);
+drwText("DIV", 8, 208, 8, 150, 155, 170);
+frect(px(34), py(205), 26*sc, 15*sc, 30, 34, 42);
+gfx_r = 45; gfx_g = 50; gfx_b = 60; gfx_a = 1;
+gfx_rect(px(34), py(205), 26*sc, 15*sc);
+#ds = sprintf(#, "%d", cdvG[pat*8+curGraph]);
+drwTextC(#ds, 47, 208, 9, 200, 205, 215);
+drwText("RATE", 10, 230, 8, 150, 155, 170);
+knob(26, 246, 17, ratG[pat], 0, 13);
+#rs = fmtRate(ratG[pat]);
+drwTextC(#rs, 26, 265, 8, 200, 205, 215);
+btn(8, 292, 40, 14, "FREE", freeOn, 255, 150, 60);
+knob(26, 318, 10, freeHz, 0.05, 40);
+#fs = sprintf(#, "%.1fHz", freeHz);
+drwTextC(#fs, 26, 331, 8, 200, 205, 215);
+btn(8, 348, 48, 14, "RETRIG", retG[pat], 100, 205, 120);
+btn(62, 348, 48, 14, "LINK", lnkG[pat], 100, 205, 120);
+btn(116, 348, 54, 14, "CHRD", chmG[pat], 100, 205, 120);
+btn(8, 366, 96, 16, "ARP PRESET >", 0, 100, 205, 120);
+
+// tabs
+t = 0;
+while (t < 8) (
+  #tl = t == 0 ? "NOTE" : t == 1 ? "RAND" : t == 2 ? "OCT" : t == 3 ? "PITCH" : t == 4 ? "VEL" : t == 5 ? "GATE" : t == 6 ? "LATE" : "HARM";
+  frect(px(178 + t*76), py(28), 72*sc, 16*sc, t == curGraph ? 36 : 24, t == curGraph ? 70 : 28, t == curGraph ? 48 : 35);
+  drwTextC(#tl, 178 + t*76 + 36, 31, 9, t == curGraph ? 220 : 150, t == curGraph ? 235 : 155, t == curGraph ? 245 : 170);
+  t += 1;
+);
+
+// grid
+frect(px(178), py(48), 672*sc, 296*sc, 16, 18, 23);
+// active step highlight
+pl2 = play_state & 1;
+pl2 && arpOn && lastFired >= 0 ? (
+  setc(150, 150, 150);
+  gfx_a = 0.22;
+  gfx_rect(px(178 + (lastFired % lenN) * 42), py(48), 42*sc, 296*sc);
+  gfx_a = 1;
+);
+col = 0;
+while (col < 16) (
+  gfx_r = 30; gfx_g = 34; gfx_b = 42; gfx_a = 1;
+  gfx_rect(px(178 + col*42), py(48), 42*sc, 296*sc);
+  v = graphVal(curGraph, col);
+  cx = 178 + col*42 + 21;
+  cy = 48 + 148;
+  curGraph == 0 ? (
+    drawNoteSym(178 + col*42 + 4, 48 + 8, 34, 280, v);
+    resG[pat*16+col] ? (
+      gfx_r = 60; gfx_g = 220; gfx_b = 100; gfx_a = 1;
+      gfx_line(px(cx-4), py(340), px(cx+4), py(340));
+      gfx_line(px(cx+4), py(340), px(cx), py(332));
+      gfx_line(px(cx), py(332), px(cx-4), py(340));
+    );
+  ) : (
+    bar = 0;
+    cr = 255; cg = 255; cb = 255;
+    curGraph == 1 ? ( bar = v / 8 * 148; cr = 170; cg = 100; cb = 255; ) :
+    curGraph == 2 ? ( bar = v / 8 * 148; cr = 255; cg = 150; cb = 60; ) :
+    curGraph == 3 ? ( bar = v / 12 * 148; cr = 220; cg = 200; cb = 80; ) :
+    curGraph == 6 ? ( bar = v / 100 * 148; cr = 220; cg = 120; cb = 190; ) :
+    curGraph == 7 ? ( bar = v / 12 * 148; cr = 140; cg = 230; cb = 150; );
+    curGraph == 4 || curGraph == 5 ? (
+      curGraph == 4 ? (
+        frect(px(cx - 7), py(48 + 296 - v/200*296), 14*sc, v/200*296*sc, 90, 140, 255);
+        gfx_r = 70; gfx_g = 80; gfx_b = 95; gfx_a = 1;
+        gfx_line(px(178 + col*42 + 2), py(cy), px(178 + col*42 + 40), py(cy));
+      ) : (
+        frect(px(cx - 7), py(48), 14*sc, v/100*296*sc, 80, 200, 210);
+      );
+    ) : (
+      gfx_r = 55; gfx_g = 60; gfx_b = 72; gfx_a = 1;
+      gfx_line(px(178 + col*42 + 2), py(cy), px(178 + col*42 + 40), py(cy));
+      setc(cr, cg, cb);
+      bar >= 0 ? gfx_rect(px(cx - 7), py(cy - bar), 14*sc, bar*sc) :
+                 gfx_rect(px(cx - 7), py(cy), 14*sc, (-bar)*sc);
+      v != 0 ? (
+        #vs = sprintf(#, "%+d", v);
+        drwTextC(#vs, cx, cy - bar - 12, 8, 200, 205, 215);
+      );
+    );
+  );
+  col += 1;
+);
+// length line
+gfx_r = 60; gfx_g = 200; gfx_b = 100; gfx_a = 1;
+gfx_line(px(178 + lenG[pat*8+curGraph]*42), py(48), px(178 + lenG[pat*8+curGraph]*42), py(344));
+
+// mutes (note tab)
+curGraph == 0 ? (
+  col = 0;
+  while (col < 16) (
+    mb = (mutG[pat] / pw2[col]) % 2 == 1;
+    frect(px(178 + col*42 + 4), py(348), 34*sc, 15*sc, mb ? 150 : 30, mb ? 40 : 34, mb ? 40 : 42);
+    drwTextC(mb ? "x" : ".", 178 + col*42 + 21, 350, 8, mb ? 255 : 120, mb ? 120 : 127, mb ? 120 : 140);
+    col += 1;
+  );
+  drwText("mutes", 862, 352, 8, 120, 127, 140);
+);
+curGraph == 0 ? (
+  drwText("arrows: up / down / up-down / down-up / bars = extremes sound twice / zigzag = fingered top-bot / 1-8 = chord notes low to high", 178, 370, 8, 120, 127, 140);
+) : curGraph == 3 ? (
+  drwText("pitch shifts only notes whose degree is enabled ->", 178, 370, 8, 120, 127, 140);
+) : curGraph == 4 ? (
+  drwText("step velocity scaling 0-200%", 178, 370, 8, 120, 127, 140);
+) : curGraph == 5 ? (
+  drwText("gate: step duration (100% = tie)", 178, 370, 8, 120, 127, 140);
+) : curGraph == 6 ? (
+  drwText("late/early step offset", 178, 370, 8, 120, 127, 140);
+) : curGraph == 1 ? (
+  drwText("random note-selection offset", 178, 370, 8, 120, 127, 140);
+) : curGraph == 2 ? (
+  drwText("octave transposition per step", 178, 370, 8, 120, 127, 140);
+) : (
+  drwText("second note per step, relative", 178, 370, 8, 120, 127, 140);
+);
+
+// constraint keys (right panel)
+drwText("BLOCK", 858, 44, 8, 150, 155, 170);
+pc = 0;
+while (pc < 12) (
+  st = conG[pc];
+  frect(px(858), py(48 + pc*21), 30*sc, 19*sc, st == 0 ? 40 : 150, st == 0 ? 44 : 40, st == 0 ? 52 : 40);
+  #nk = noteName(pc);
+  drwText(#nk, 862, 48 + pc*21 + 4, 8, st == 0 ? 150 : 255, st == 0 ? 155 : 150, st == 0 ? 170 : 150);
+  st == 1 ? drwText("x", 876, 48 + pc*21 + 4, 9, 255, 120, 120) :
+  st == 2 ? drwText(">", 878, 48 + pc*21 + 4, 9, 255, 150, 120) :
+  st == 3 ? drwText("<", 878, 48 + pc*21 + 4, 9, 255, 150, 120);
+  pc += 1;
+);
+curGraph == 3 ? (
+  drwText("DEG", 894, 44, 8, 150, 155, 170);
+  d = 0;
+  while (d < 7) (
+    frect(px(894), py(48 + d*15), 22*sc, 14*sc, penG[d] ? 60 : 30, penG[d] ? 200 : 34, penG[d] ? 100 : 42);
+    #ds = sprintf(#, "%d", d + 1);
+    drwTextC(#ds, 905, 48 + d*15 + 2, 8, penG[d] ? 230 : 150, penG[d] ? 240 : 155, penG[d] ? 250 : 170);
+    d += 1;
+  );
+);
+drwText("OUT", 894, 178, 8, 150, 155, 170);
+frect(px(894), py(190), 58*sc, 24*sc, 26, 29, 36);
+lastOutNote >= 0 ? (
+  #on = noteName(lastOutNote);
+  drwTextC(#on, 923, 196, 11, 100, 205, 120);
+) : drwTextC("-", 923, 196, 11, 90, 95, 110);
+
+// ---------- chords section ----------
+frect(px(0), py(390), 960*sc, 210*sc, 24, 21, 27);
+drwText("CHORD SLOT", 8, 394, 8, 150, 155, 170);
+frect(px(8), py(406), 150*sc, 24*sc, 16, 18, 23);
+gfx_r = 45; gfx_g = 50; gfx_b = 60; gfx_a = 1;
+gfx_rect(px(8), py(406), 150*sc, 24*sc);
+#sn = noteName(curSlot);
+#sn2 = sprintf(#, "%s  (%d)", #sn, curSlot);
+drwTextC(#sn2, 83, 412, 10, 255, 150, 60);
+#cn = chordNameOf(curSlot);
+drwTextC(#cn, 83, 442, 13, 200, 205, 215);
+btn(8, 474, 64, 16, "MENU", 0, 60, 90, 130);
+btn(78, 474, 64, 16, "PRESETS", 0, 60, 90, 130);
+frect(px(8), py(496), 46*sc, 15*sc, lrn ? 70 : 22, lrn ? 190 : 25, lrn ? 90 : 32);
+gfx_r = 45; gfx_g = 50; gfx_b = 60; gfx_a = 1;
+gfx_rect(px(8), py(496), 46*sc, 15*sc);
+drwTextC("LEARN", 31, 498, 9, lrn ? 240 : 150, lrn ? 250 : 155, lrn ? 255 : 170);
+btn(58, 496, 46, 15, "COPY", 0, 60, 90, 130);
+btn(108, 496, 46, 15, "PASTE", 0, 60, 90, 130);
+btn(158, 496, 46, 15, "WTF", 0, 60, 90, 130);
+frect(px(208), py(496), 24*sc, 15*sc, watchOn ? 60 : 22, watchOn ? 200 : 25, watchOn ? 100 : 32);
+gfx_r = 45; gfx_g = 50; gfx_b = 60; gfx_a = 1;
+gfx_rect(px(208), py(496), 24*sc, 15*sc);
+drwTextC("eye", 220, 498, 8, watchOn ? 230 : 150, watchOn ? 240 : 155, watchOn ? 250 : 170);
+drwText("drag values vertically", 8, 520, 8, 100, 105, 120);
+
+// voices
+v = 0;
+while (v < 8) (
+  vx = 8 + v * 30;
+  #vl = sprintf(#, "%d", v + 1);
+  drwTextC(#vl, vx + 13, 514, 8, 120, 127, 140);
+  frect(px(vx), py(520), 26*sc, 20*sc, lkOn[v] ? 50 : 24, lkOn[v] ? 55 : 28, lkOn[v] ? 45 : 36);
+  gfx_r = 45; gfx_g = 50; gfx_b = 60; gfx_a = 1;
+  gfx_rect(px(vx), py(520), 26*sc, 20*sc);
+  chN[curSlot*8+v] >= 0 ? (
+    #vn = noteName(chN[curSlot*8+v]);
+    drwTextC(#vn, vx + 13, 525, 8, lkOn[v] ? 180 : 200, lkOn[v] ? 230 : 205, lkOn[v] ? 190 : 215);
+  ) : drwTextC("off", vx + 13, 525, 8, 100, 105, 120);
+  frect(px(vx), py(544), 26*sc, 18*sc, 24, 28, 36);
+  gfx_r = 45; gfx_g = 50; gfx_b = 60; gfx_a = 1;
+  gfx_rect(px(vx), py(544), 26*sc, 18*sc);
+  #vv = sprintf(#, "%d%%", chV[curSlot*8+v]);
+  drwTextC(#vv, vx + 13, 548, 8, 180, 185, 195);
+  frect(px(vx), py(566), 26*sc, 14*sc, lkOn[v] ? 100 : 24, lkOn[v] ? 205 : 28, lkOn[v] ? 120 : 36);
+  drwTextC("L", vx + 13, 568, 8, lkOn[v] ? 230 : 140, lkOn[v] ? 240 : 145, lkOn[v] ? 250 : 160);
+  v += 1;
+);
+
+// piano
+frect(px(230), py(398), 26*sc, 16*sc, 24, 28, 36);
+drwTextC("<", 243, 400, 10, 200, 205, 215);
+#k1 = noteName(keyScroll*12);
+#k2 = noteName(keyScroll*12 + 35);
+#kr = sprintf(#, "%s..%s", #k1, #k2);
+drwTextC(#kr, 265, 401, 9, 150, 155, 170);
+frect(px(302), py(398), 26*sc, 16*sc, 24, 28, 36);
+drwTextC(">", 315, 400, 10, 200, 205, 215);
+
+// blips
+o = 0;
+while (o < 3) (
+  w = 0;
+  while (w < 7) (
+    won = w == 0 ? 0 : w == 1 ? 2 : w == 2 ? 4 : w == 3 ? 5 : w == 4 ? 7 : w == 5 ? 9 : 11;
+    n = keyScroll*12 + o*12 + won;
+    bx = 230 + (o*7 + w)*33;
+    bc = -1;
+    lrn && lrnCnt > 0 ? (
+      i = 0;
+      while (i < lrnCnt) ( lrnB[i] == n ? bc = 0; i += 1; );
+    );
+    bc < 0 && n == curSlot ? bc = 1;
+    bc < 0 ? (
+      i = 0;
+      while (i < 8) ( chN[curSlot*8+i] == n ? bc = 2; i += 1; );
+    );
+    bc < 0 && slotUsed(n) ? bc = 3;
+    bc == 0 ? frect(px(bx+3), py(424), 27*sc, 4*sc, 215, 70, 70) :
+    bc == 1 ? frect(px(bx+3), py(424), 27*sc, 4*sc, 255, 150, 60) :
+    bc == 2 ? frect(px(bx+3), py(424), 27*sc, 4*sc, 100, 205, 120) :
+    bc == 3 ? frect(px(bx+3), py(424), 27*sc, 4*sc, 90, 140, 255);
+    w += 1;
+  );
+  o += 1;
+);
+
+// white keys
+o = 0;
+while (o < 3) (
+  w = 0;
+  while (w < 7) (
+    won = w == 0 ? 0 : w == 1 ? 2 : w == 2 ? 4 : w == 3 ? 5 : w == 4 ? 7 : w == 5 ? 9 : 11;
+    n = keyScroll*12 + o*12 + won;
+    bx = 230 + (o*7 + w)*33;
+    // in current chord?
+    inc = 0;
+    i = 0;
+    while (i < 8) ( chN[curSlot*8+i] == n ? inc = 1; i += 1; );
+    lrn && lrnCnt > 0 ? (
+      i = 0;
+      while (i < lrnCnt) ( lrnB[i] == n ? inc = 2; i += 1; );
+    );
+    frect(px(bx), py(430), 33*sc, 160*sc, inc == 1 ? 120 : inc == 2 ? 180 : 235, inc == 1 ? 210 : inc == 2 ? 80 : 235, inc == 1 ? 130 : inc == 2 ? 80 : 240);
+    gfx_r = 70; gfx_g = 75; gfx_b = 85; gfx_a = 1;
+    gfx_rect(px(bx), py(430), 33*sc, 160*sc);
+    n == curSlot ? ( gfx_r = 255; gfx_g = 150; gfx_b = 60; gfx_a = 1; gfx_rect(px(bx+1), py(431), 31*sc, 158*sc); );
+    w += 1;
+  );
+  o += 1;
+);
+// black keys
+o = 0;
+while (o < 3) (
+  w = 0;
+  while (w < 6) (
+    won = w == 0 ? 0 : w == 1 ? 2 : w == 2 ? 4 : w == 3 ? 5 : w == 4 ? 7 : w == 5 ? 9 : 11;
+    won2 = w == 0 ? 2 : w == 1 ? 4 : w == 2 ? 5 : w == 3 ? 7 : w == 4 ? 9 : w == 5 ? 11 : 12;
+    won2 - won == 2 ? (
+      n = keyScroll*12 + o*12 + won + 1;
+      bx = 230 + (o*7 + w)*33 + 24;
+      inc = 0;
+      i = 0;
+      while (i < 8) ( chN[curSlot*8+i] == n ? inc = 1; i += 1; );
+      lrn && lrnCnt > 0 ? (
+        i = 0;
+        while (i < lrnCnt) ( lrnB[i] == n ? inc = 2; i += 1; );
+      );
+      frect(px(bx), py(430), 18*sc, 96*sc, inc == 1 ? 60 : inc == 2 ? 120 : 25, inc == 1 ? 150 : inc == 2 ? 50 : 27, inc == 1 ? 90 : inc == 2 ? 50 : 30);
+      n == curSlot ? ( gfx_r = 255; gfx_g = 150; gfx_b = 60; gfx_a = 1; gfx_rect(px(bx), py(430), 18*sc, 96*sc); );
+    );
+    w += 1;
+  );
+  o += 1;
+);
+
+// ---------- menus ----------
+menuOpen ? (
+  cnt2 = menuOpen == 1 ? 22 : menuOpen == 2 ? 15 : 10;
+  rows2 = ceil(cnt2 / 2);
+  cols2 = menuOpen == 3 ? 1 : 2;
+  frect(px(menuX - 4), py(menuY - 4), (cols2*150 + 8)*sc, (rows2*14 + 8)*sc, 18, 20, 26);
+  gfx_r = 60; gfx_g = 65; gfx_b = 78; gfx_a = 1;
+  gfx_rect(px(menuX - 4), py(menuY - 4), (cols2*150 + 8)*sc, (rows2*14 + 8)*sc);
+  m = 0;
+  while (m < cnt2) (
+    col2 = floor(m / rows2);
+    row2 = m - col2 * rows2;
+    mx2 = menuX + col2 * 150;
+    my2 = menuY + row2 * 14;
+    #ml = menuLabel(menuOpen, m);
+    #ml == "-" ? (
+      gfx_r = 50; gfx_g = 55; gfx_b = 66; gfx_a = 1;
+      gfx_line(px(mx2), py(my2 + 6), px(mx2 + 146), py(my2 + 6));
+    ) : (
+      inRect(mx, my, mx2, my2, 150, 14) ? frect(px(mx2), py(my2), 150*sc, 14*sc, 60, 70, 90);
+      drwText(#ml, mx2 + 4, my2 + 2, 9, 200, 205, 215);
+    );
+    m += 1;
+  );
+);
+
