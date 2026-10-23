@@ -43,6 +43,16 @@ check(outRefs[70]==0,"module change releases bypass notes"); dump_midi();
 gfx_w=1152; gfx_h=768; mouse_x=-1; mouse_y=-1;
 k=0; while(k<8) (curGraph=k; __gfx(); k+=1;);
 check(sc>0,"all GUI lanes execute");
+gfx_w=2304; gfx_h=1536; __gfx();
+check(abs(sc-2.4)<0.00001,"Retina framebuffer scales beyond 200 percent");
+mouse_x=px(580); mouse_y=py(13); __gfx();
+check(hitTest(mx,my)==2,"Retina pointer coordinates match tone control");
+gfx_w=1600; gfx_h=640; __gfx();
+check(abs(sc-1)<0.00001 && abs(ox-320)<0.00001,"wide windows center without stretching");
+gfx_w=480; gfx_h=320; __gfx();
+check(abs(sc-0.5)<0.00001 && abs(ox)<0.00001 && abs(oy)<0.00001,"small windows fit without cropping");
+mouse_x=-1; mouse_y=-1;
+
 // Directional shapes must stay inside the held chord, even over many cycles.
 pat=0; arpPatternDefaults(0); chOn=0; arpCnt=3;
 helB[0]=48; helB[1]=52; helB[2]=55;

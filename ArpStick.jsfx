@@ -1156,7 +1156,7 @@ function px(x) ( ox + x * sc );
 function py(y) ( oy + y * sc );
 
 function drwText(s, x, y, sz, r, g, b) (
-  gfx_setfont(1, "Arial", max(9, floor(sz * sc)));
+  gfx_setfont(1, "Arial", max(1, floor(max(10,sz) * sc + 0.5)));
   setc(r, g, b);
   gfx_x = px(x);
   gfx_y = py(y);
@@ -1164,7 +1164,7 @@ function drwText(s, x, y, sz, r, g, b) (
 );
 
 function drwTextC(s, cx, y, sz, r, g, b) local(w, h) (
-  gfx_setfont(1, "Arial", max(9, floor(sz * sc)));
+  gfx_setfont(1, "Arial", max(1, floor(max(10,sz) * sc + 0.5)));
   gfx_measurestr(s, w, h);
   setc(r, g, b);
   gfx_x = px(cx) - w / 2;
@@ -1176,14 +1176,20 @@ function inRect(x, y, rx, ry, rw, rh) (
   x >= rx && x < rx + rw && y >= ry && y < ry + rh;
 );
 
-function btn(x, y, w, h, lab, on, accR, accG, accB) (
+function btn(x, y, w, h, lab, on, accR, accG, accB) local(tw,th,fs) (
   frect(px(x), py(y), w*sc, h*sc,
     on ? accR : 22,
     on ? accG : 25,
     on ? accB : 32);
   gfx_r = 45/255; gfx_g = 50/255; gfx_b = 60/255; gfx_a = 1;
   outline(px(x), py(y), w*sc, h*sc, 54, 63, 76);
-  drwTextC(lab, x + w/2, y + (h-9)/2, 9, on ? 10 : 150, on ? 12 : 155, on ? 14 : 170);
+  // Measure the actual font rather than positioning text around a fixed 9px box.
+  fs=max(1,floor(10*sc+0.5));
+  gfx_setfont(1,"Arial",fs); gfx_measurestr(lab,tw,th);
+  tw>(w-6)*sc ? (fs=max(1,floor(fs*(w-6)*sc/tw)); gfx_setfont(1,"Arial",fs); gfx_measurestr(lab,tw,th););
+  setc(on ? 10 : 174,on ? 12 : 184,on ? 14 : 200);
+  gfx_x=px(x)+(w*sc-tw)/2; gfx_y=py(y)+(h*sc-th)/2;
+  gfx_printf("%s",lab);
 );
 
 function knob(x, y, r, val, vmin, vmax) local(a) (
@@ -1368,8 +1374,8 @@ function hitTest(x, y) local(i, cx, cy, p, bx, n,r,o,w,wo,won,won2) (
   inRect(x, y, 300, 5, 56, 16) ? r = 70 :
   inRect(x, y, 390, 5, 56, 16) ? r = 71 :
   inRect(x, y, 480, 5, 56, 16) ? r = 72 :
-  inRect(x, y, 562, 0, 44, 26) ? r = 2 :
-  inRect(x, y, 632, 0, 44, 26) ? r = 1 :
+  inRect(x, y, 550, 3, 70, 20) ? r = 2 :
+  inRect(x, y, 628, 3, 70, 20) ? r = 1 :
   // pattern letters
   (y >= 34 && y < 34 + 6*24 && x >= 8 && x < 8 + 2*54) ? (
     hitLetter = floor((x - 8) / 54) + floor((y - 34) / 24) * 2;
@@ -1470,8 +1476,7 @@ function hitTest(x, y) local(i, cx, cy, p, bx, n,r,o,w,wo,won,won2) (
 
 function drawInterface() local(i,p,bx,by,nd,t,col,v,cx,cy,bar,cr,cg,cb,mb,pc,st,d,vx,o,w,won,won2,n,bc,inc,pl2,cnt2,rows2,cols2,m,col2,row2,mx2,my2,s2,id2,f,v2,m2,nl) (
 sc = min(gfx_w / 960, gfx_h / 640);
-sc < 0.4 ? sc = 0.4;
-sc > 2 ? sc = 2;
+sc = max(0.01, sc); // No upper cap: Retina framebuffers can exceed 2x.
 ox = (gfx_w - 960 * sc) / 2;
 oy = (gfx_h - 640 * sc) / 2;
 
@@ -1675,14 +1680,10 @@ drwText("chord player + pattern arp", 76, 9, 8, 120, 127, 140);
 btn(300, 5, 56, 16, "CHORD", chOn, 100, 205, 120);
 btn(390, 5, 56, 16, "ARP", arpOn, 100, 205, 120);
 btn(480, 5, 56, 16, "LATCH", latch, 255, 150, 60);
-drwText("TONE", 552, 8, 8, 150, 155, 170);
-knob(585, 13, 10, tone, 0, 100);
-drwText("TRANS", 636, 8, 8, 150, 155, 170);
-knob(665, 13, 10, trans, -36, 36);
-#ts = sprintf(#, "%+d", floor(trans));
-drwText(#ts, 674, 6, 8, 200, 205, 215);
-#ts = sprintf(#, "%d%%", floor(tone));
-drwText(#ts, 594, 6, 8, 200, 205, 215);
+#ts=sprintf(#,"TONE %d%%",floor(tone));
+btn(550,3,70,20,#ts,0,100,205,120);
+#ts=sprintf(#,"TRANS %+d",floor(trans));
+btn(628,3,70,20,#ts,0,100,205,120);
 
 #channelLabel = slider6==0 ? "OUT: INPUT" : sprintf(#,"OUT: CH %d",slider6);
 btn(710,5,112,16,#channelLabel,slider6>0,100,205,120);
@@ -1690,7 +1691,7 @@ btn(830,5,122,16,slider7 ? "MIDI REMOTE: ON" : "MIDI REMOTE: OFF",slider7,100,20
 
 // ---------- arp section ----------
 frect(px(0), py(26), 960*sc, 364*sc, 20, 23, 29);
-drwText("PATTERNS", 8, 26, 8, 120, 127, 140);
+
 p = 0;
 while (p < 12) (
   bx = 8 + (p % 2) * 54;
@@ -1723,7 +1724,7 @@ gfx_r = 45/255; gfx_g = 50/255; gfx_b = 60/255; gfx_a = 1;
 outline(px(34), py(205), 26*sc, 15*sc, 54, 63, 76);
 #ds = sprintf(#, "%d", cdvG[pat*8+curGraph]);
 drwTextC(#ds, 47, 208, 9, 200, 205, 215);
-drwText("RATE", 10, 230, 8, 150, 155, 170);
+drwText("RATE", 52, 235, 8, 150, 155, 170);
 knob(26, 246, 17, ratG[pat], 0, 15);
 #rs = fmtRate(ratG[pat]);
 drwTextC(#rs, 26, 265, 8, 200, 205, 215);
@@ -1902,13 +1903,13 @@ while (v < 8) (
   vx = 8 + v * 30;
   #vl = sprintf(#, "%d", v + 1);
   drwTextC(#vl, vx + 13, 514, 8, 120, 127, 140);
-  frect(px(vx), py(520), 26*sc, 20*sc, lkOn[v] ? 50 : 24, lkOn[v] ? 55 : 28, lkOn[v] ? 45 : 36);
+  frect(px(vx), py(526), 26*sc, 16*sc, lkOn[v] ? 50 : 24, lkOn[v] ? 55 : 28, lkOn[v] ? 45 : 36);
   gfx_r = 45/255; gfx_g = 50/255; gfx_b = 60/255; gfx_a = 1;
-  outline(px(vx), py(520), 26*sc, 20*sc, 54, 63, 76);
+  outline(px(vx), py(526), 26*sc, 16*sc, 54, 63, 76);
   chN[curSlot*8+v] >= 0 ? (
     #vn = noteName(chN[curSlot*8+v]);
-    drwTextC(#vn, vx + 13, 525, 8, lkOn[v] ? 180 : 200, lkOn[v] ? 230 : 205, lkOn[v] ? 190 : 215);
-  ) : drwTextC("off", vx + 13, 525, 8, 100, 105, 120);
+    drwTextC(#vn, vx + 13, 528, 8, lkOn[v] ? 180 : 200, lkOn[v] ? 230 : 205, lkOn[v] ? 190 : 215);
+  ) : drwTextC("off", vx + 13, 528, 8, 100, 105, 120);
   frect(px(vx), py(544), 26*sc, 18*sc, 24, 28, 36);
   gfx_r = 45/255; gfx_g = 50/255; gfx_b = 60/255; gfx_a = 1;
   outline(px(vx), py(544), 26*sc, 18*sc, 54, 63, 76);
@@ -2228,6 +2229,7 @@ i=0; while(i<7) (penG[i]=1; i+=1;);
 stateReady = 1;
 );
 ext_noinit = 1;
+gfx_ext_retina = 1; // Request native-resolution rendering on HiDPI displays.
 
 // ============================================================================
 // @slider
