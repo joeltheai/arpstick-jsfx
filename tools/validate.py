@@ -17,6 +17,7 @@ applied (see tools/README.md).
 """
 
 import argparse
+import re
 import subprocess
 import sys
 import tempfile
@@ -31,9 +32,10 @@ def preprocess(src: str) -> str:
     current = None
     for ln in src.split("\n"):
         s = ln.strip()
-        if s.startswith("desc:") or s.startswith("slider"):
+        if s.startswith(("desc:", "options:")) or re.match(r"slider\d+:", s):
             continue
-        if s in ("@slider", "@block", "@sample", "@serialize", "@gfx"):
+        if s.split(" ")[0] in ("@slider", "@block", "@sample", "@serialize", "@gfx"):
+            s = s.split(" ")[0]
             if current is not None:
                 out.append(");")
             out.append("function __%s() (" % s[1:])
@@ -71,7 +73,11 @@ def main() -> int:
         f.write(code)
         tmp = f.name
     try:
-        return subprocess.run([args.loose_eel, tmp]).returncode
+        result = subprocess.run([args.loose_eel, tmp], capture_output=True, text=True)
+        sys.stdout.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        failed = re.search(r"syntax error|FAIL:", result.stdout + result.stderr, re.I)
+        return result.returncode or (1 if failed else 0)
     finally:
         Path(tmp).unlink(missing_ok=True)
 
