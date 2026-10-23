@@ -57,7 +57,7 @@ while (k < 8) (
   beat_position = k * 0.25;
   __block(); __sample();
   __sample();
-  dump_midi();        // expect: 48, 52, 55, 60, 64, 67, 72, 76
+  dump_midi();        // expect: 48, 52, 55, 48, 52, 55, 48, 52
   k += 1;
 );
 push_midi(0, 0x80, 48, 0);

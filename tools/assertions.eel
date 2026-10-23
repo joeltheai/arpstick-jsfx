@@ -43,4 +43,46 @@ check(outRefs[70]==0,"module change releases bypass notes"); dump_midi();
 gfx_w=1152; gfx_h=768; mouse_x=-1; mouse_y=-1;
 k=0; while(k<8) (curGraph=k; __gfx(); k+=1;);
 check(sc>0,"all GUI lanes execute");
+// Directional shapes must stay inside the held chord, even over many cycles.
+pat=0; arpPatternDefaults(0); chOn=0; arpCnt=3;
+helB[0]=48; helB[1]=52; helB[2]=55;
+lenN=16; lenR=16; lenO=16; lenP=16; lenV=16; lenG2=16; lenH=16;
+shape=8;
+while(shape<16) (
+  silenceAll(); shapePos=0;
+  col=0; while(col<16) (notG[col]=shape; col+=1;);
+  stable=1; step=0;
+  while(step<192) (
+    now=step*0.25; arpFire(step);
+    (lastOutNote!=48 && lastOutNote!=52 && lastOutNote!=55) ? stable=0;
+    step+=1;
+  );
+  check(stable,sprintf(#,"shape %d stays in chord for 192 steps",shape));
+  shape+=1;
+);
+// Explicit numbered-note wrapping and the octave lane still transpose.
+silenceAll(); shapePos=0; notG[0]=3; arpFire(0);
+check(lastOutNote==60,"numbered note 4 wraps triad up one octave");
+notG[0]=8; octG[0]=1; shapePos=0; arpFire(0);
+check(lastOutNote==60,"octave lane intentionally transposes up shape");
+// Drive real incoming root notes through the chord module across long holds.
+silenceAll(); slider1=1; slider2=1; slider6=0; slider8=0; __slider();
+freeOn=0; play_state=1; prevPlay=0; prevChord=0;
+arpPatternDefaults(0); applyChordPreset(0);
+col=0; while(col<16) (notG[col]=8; col+=1;);
+rootIndex=0; progressionOK=1;
+while(rootIndex<4) (
+  progressionRoot=rootIndex==0 ? 48 : rootIndex==1 ? 53 : rootIndex==2 ? 55 : 45;
+  push_midi(0,144,progressionRoot,100);
+  step=0;
+  while(step<48) (
+    beat_position=(rootIndex*48+step)*0.25; blockRun(1);
+    (lastOutNote!=progressionRoot && lastOutNote!=progressionRoot+3 && lastOutNote!=progressionRoot+7) ? progressionOK=0;
+    step+=1;
+  );
+  push_midi(0,128,progressionRoot,0); blockRun(1);
+  rootIndex+=1;
+);
+check(progressionOK,"root-note progression stays in each chord register");
+silenceAll();
 printf("ASSERTIONS COMPLETE\n");

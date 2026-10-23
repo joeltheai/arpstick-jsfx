@@ -415,10 +415,10 @@ function arpFire(s) local(i, j, n, v, sN, idx0, idx, oct, P, k, jj, r, ov, pv, h
         oct = floor(idx0 / n);
       ) : v == 8 ? (
         idx = shapePos % n;
-        oct = floor(shapePos / n);
+        oct = 0; // Directional shapes cycle within the held chord.
       ) : v == 9 ? (
         idx = n - 1 - (shapePos % n);
-        oct = -(floor(shapePos / n));
+        oct = 0;
       ) : v == 10 ? (
         P = max(2*n - 2, 1);
         k = shapePos % P;
@@ -441,11 +441,11 @@ function arpFire(s) local(i, j, n, v, sN, idx0, idx, oct, P, k, jj, r, ov, pv, h
         oct = 0;
       ) : v == 14 ? (
         jj = floor(shapePos / 2);
-        shapePos % 2 == 0 ? ( idx = jj % n; oct = floor(jj / n); )
+        shapePos % 2 == 0 ? ( idx = jj % n; oct = 0; )
                           : ( idx = n - 1; oct = 0; );
       ) : (
         jj = floor(shapePos / 2);
-        shapePos % 2 == 0 ? ( idx = n - 1 - (jj % n); oct = -(floor(jj / n)); )
+        shapePos % 2 == 0 ? ( idx = n - 1 - (jj % n); oct = 0; )
                           : ( idx = 0; oct = 0; );
       );
       v >= 8 && (s+1)%max(1,cdvG[pat*8])==0 ? shapePos += 1;
