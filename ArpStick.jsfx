@@ -1,0 +1,1783 @@
+desc:ArpStick — Chord Player & Pattern Arpeggiator (MIDI FX)
+//  ArpStick: a two-module MIDI FX plugin.
+//  CHORDS module — a chord memorizer/player: one note in becomes a chord
+//  (128 chord slots, 8 voices each, velocity scaling, locks, learn modes,
+//  chord sorting/removal/transform tools).
+//  ARP module — a pattern-based step arpeggiator: 12 patterns, 8 graph
+//  lanes (note selection, random offset, octave, scale-aware pitch,
+//  velocity, gate, late, harmony), per-lane lengths, chord-inversion
+//  mode, note blocking, retrigger, tempo-sync or free-rate clock.
+//  Signal flow: MIDI in -> Chords -> Arp -> MIDI out. Both modules can be
+//  bypassed; notes pass through untouched when both are off. Non-note MIDI
+//  (CC, pitch bend, aftertouch, program change) always passes through.
+//  An optional polyphonic saw "test tone" lets you audition without a synth.
+//
+//  UI hints:
+//   - Graph cells: click/drag vertically to set values, drag sideways to
+//     paint columns. Alt-click a NOTE cell toggles the reset arrow.
+//   - Green length line: drag to set the lane length (1-16 steps).
+//   - Piano (bottom): click selects the chord slot; ctrl-click toggles a
+//     note in the current slot; shift-click triggers the chord; drag a lit
+//     key to move that note.
+//   - Learn: click = record chords (advances slot on release); ctrl-click =
+//     learn one slot; alt-click = advanced (note-on) learn; shift-click =
+//     timer learn (hold 1s).
+//   - Drag a pattern letter onto another to copy the whole pattern.
+//   - Note-block keys (right of arp grid) cycle: pass / block / block+up /
+//     block+down. Pitch-enable buttons 1-7 appear for the Pitch lane.
+
+slider1:1<0,1,1{Off,On}>Chord Module
+slider2:1<0,1,1{Off,On}>Arp Module
+slider3:0<-36,36,1>Chord Transpose
+slider4:0<0,1,1{Off,On}>MIDI Latch
+slider5:0<0,100,1>Test Tone
+
+// ============================================================================
+// Helpers (memory layout constants live in @init)
+// ============================================================================
+
+// ============================================================================
+// @init - helpers and initialization
+// ============================================================================
+@init
+
+// ---- helper functions ----
+
+function setc(r,g,b) ( gfx_r = r; gfx_g = g; gfx_b = b; gfx_a = 1; );
+function frect(x,y,w,h,r,g,b) ( gfx_r = r; gfx_g = g; gfx_b = b; gfx_a = 1; gfx_rect(x,y,w,h); );
+
+function noteName(n) local(pc, oct) (
+  pc = n % 12;
+  oct = floor(n / 12) - 1;
+  pc == 0  ? sprintf(#, "C%d",  oct) :
+  pc == 1  ? sprintf(#, "C#%d", oct) :
+  pc == 2  ? sprintf(#, "D%d",  oct) :
+  pc == 3  ? sprintf(#, "D#%d", oct) :
+  pc == 4  ? sprintf(#, "E%d",  oct) :
+  pc == 5  ? sprintf(#, "F%d",  oct) :
+  pc == 6  ? sprintf(#, "F#%d", oct) :
+  pc == 7  ? sprintf(#, "G%d",  oct) :
+  pc == 8  ? sprintf(#, "G#%d", oct) :
+  pc == 9  ? sprintf(#, "A%d",  oct) :
+  pc == 10 ? sprintf(#, "A#%d", oct) :
+  sprintf(#, "B%d", oct);
+);
+
+function fmtRate(i) (
+  i < 5  ? sprintf(#, "%d bar", 16 / pw2[i]) :
+  i == 5 ? sprintf(#, "1/2") :
+  sprintf(#, "1/%d", pw2[i-4]);
+);
+
+function hindRoot(ps) local(p) (
+  r = -1;
+  p = 0;
+  while (p < 12 && r < 0) (
+    (ps / pw2[p]) % 2 == 1 && (ps / pw2[(p+7)%12]) % 2 == 1 ? r = p;
+    p += 1;
+  );
+  r < 0 ? (
+    p = 0;
+    while (p < 12 && r < 0) (
+      (ps / pw2[p]) % 2 == 1 && (ps / pw2[(p+5)%12]) % 2 == 1 ? r = (p+5) % 12;
+      p += 1;
+    );
+  );
+  r < 0 ? (
+    p = 0;
+    while (p < 12 && r < 0) (
+      (ps / pw2[p]) % 2 == 1 ? r = p;
+      p += 1;
+    );
+  );
+  r;
+);
+
+function degreeOf(iv) (
+  iv == 0 ? 1 :
+  (iv == 1 || iv == 2) ? 2 :
+  (iv == 3 || iv == 4) ? 3 :
+  iv == 5 ? 4 :
+  (iv == 6 || iv == 7) ? 5 :
+  (iv == 8 || iv == 9) ? 6 : 7;
+);
+
+function chordNameOf(slot) local(v, n, pc, pcset, cnt, root, iv, lo) (
+  pcset = 0; cnt = 0; lo = 999;
+  v = 0;
+  while (v < 8) (
+    n = chN[slot*8+v];
+    n >= 0 ? (
+      pc = n % 12;
+      (pcset / pw2[pc]) % 2 == 0 ? ( pcset += pw2[pc]; cnt += 1; );
+      n < lo ? lo = n;
+    );
+    v += 1;
+  );
+  cnt == 0 ? (
+    sprintf(#, "-- empty --");
+  ) : (
+    root = hindRoot(pcset);
+    iv = 0;
+    pc = 1;
+    while (pc < 12) (
+      (pcset / pw2[(root+pc)%12]) % 2 == 1 ? iv += pw2[pc];
+      pc += 1;
+    );
+    #n2 = "";
+    #n2 = noteName(root);
+    iv == 128  ? sprintf(#, "%s 5", #n2) :
+    iv == 136  ? sprintf(#, "%s min", #n2) :      // 3+7
+    iv == 144  ? sprintf(#, "%s maj", #n2) :      // 4+7
+    iv == 72   ? sprintf(#, "%s dim", #n2) :      // 3+6
+    iv == 272  ? sprintf(#, "%s aug", #n2) :      // 4+8
+    iv == 160  ? sprintf(#, "%s sus4", #n2) :     // 5+7
+    iv == 132  ? sprintf(#, "%s sus2", #n2) :     // 2+7
+    iv == 1160 ? sprintf(#, "%s m7", #n2) :       // 3+7+10
+    iv == 1168 ? sprintf(#, "%s 7", #n2) :        // 4+7+10
+    iv == 2192 ? sprintf(#, "%s maj7", #n2) :     // 4+7+11
+    iv == 1096 ? sprintf(#, "%s m7b5", #n2) :     // 3+6+10
+    iv == 584  ? sprintf(#, "%s dim7", #n2) :     // 3+6+9
+    iv == 656  ? sprintf(#, "%s 6", #n2) :        // 4+7+9
+    iv == 648  ? sprintf(#, "%s m6", #n2) :       // 3+7+9
+    iv == 1184 ? sprintf(#, "%s 7sus4", #n2) :    // 5+7+10
+    iv == 148  ? sprintf(#, "%s add9", #n2) :     // 2+4+7
+    iv == 140  ? sprintf(#, "%s madd9", #n2) :    // 2+3+7
+    iv == 2196 ? sprintf(#, "%s maj9", #n2) :     // 2+4+7+11
+    iv == 1164 ? sprintf(#, "%s m9", #n2) :       // 2+3+7+10
+    iv == 1172 ? sprintf(#, "%s 9", #n2) :        // 2+4+7+10
+    iv == 1170 ? sprintf(#, "%s 7b9", #n2) :      // 1+4+7+10
+    iv == 2184 ? sprintf(#, "%s minmaj7", #n2) :  // 3+7+11
+    sprintf(#, "%s (%d notes)", #n2, cnt);
+  );
+);
+
+// ---- MIDI out with test-tone sidecar ----
+function toneOn(note, vel) local(i) (
+  tone > 0 ? (
+    // retrigger existing voice for this pitch
+    f = -1;
+    i = 0;
+    while (i < 16) (
+      tvN[i] == note ? ( f = i; i = 16; );
+      i += 1;
+    );
+    f < 0 ? (
+      // find free or oldest voice
+      f = 0;
+      i = 0;
+      while (i < 16) (
+        tvN[i] < 0 ? ( f = i; i = 16; );
+        i += 1;
+      );
+    );
+    tvN[f] = note;
+    tvV[f] = vel;
+    tvT[f] = vel / 127 * (tone / 100);
+    tvP[f] = 0;
+  );
+);
+
+function toneOff(note) local(i) (
+  tone > 0 ? (
+    i = 0;
+    while (i < 16) (
+      tvN[i] == note ? tvT[i] = 0;
+      i += 1;
+    );
+  );
+);
+
+function sendOn(offs, ch, note, vel) (
+  note = max(0, min(127, note));
+  midisend(offs, 0x90 | ch, note, vel);
+  toneOn(note, vel);
+);
+
+function sendOff(offs, ch, note) (
+  note = max(0, min(127, note));
+  midisend(offs, 0x80 | ch, note, 0);
+  toneOff(note);
+);
+
+function silenceAll() local(i) (
+  i = 0;
+  while (i < sndCnt) (
+    sendOff(0, sndC[i], sndN[i]);
+    i += 1;
+  );
+  sndCnt = 0;
+  i = 0;
+  while (i < 16) (
+    tvN[i] >= 0 ? ( tvT[i] = 0; tvN[i] = -1; );
+    i += 1;
+  );
+);
+
+// ---- Chords module ----
+function releaseChord(offs) local(i) (
+  i = 0;
+  while (i < actCnt) (
+    nn = actL[i];
+    actR[nn] > 0 ? (
+      actR[nn] -= 1;
+      arpOn ? 0 : sendOff(offs, actCh, nn);
+    );
+    i += 1;
+  );
+  actCnt = 0;
+  activeSlot = -1;
+  arpDirty = 1;
+);
+
+function chordTrigger(n, v, ch, offs) local(i, nn, vel) (
+  inN[n] += 1;
+  curSlot = n;
+  watB[n] = 1;
+  activeSlot >= 0 && activeSlot != n ? releaseChord(offs);
+  inN[n] > 1 ? ( 0; ) : (
+    activeSlot = n;
+    actCh = ch;
+    cnt = 0;
+    i = 0;
+    while (i < 8) (
+      nn = lkOn[i] ? lkN[i] : chN[n*8+i];
+      nn >= 0 ? (
+        nn2 = max(0, min(127, nn + trans));
+        vel = max(1, min(127, floor(v * chV[n*8+i] / 100 + 0.5)));
+        arpOn ? 0 : sendOn(offs, ch, nn2, vel);
+        actR[nn2] += 1;
+        actL[cnt] = nn2;
+        cnt += 1;
+      );
+      i += 1;
+    );
+    actCnt = cnt;
+    arpDirty = 1;
+    arpOn && retG[pat] ? wantRetrig = 1;
+  );
+);
+
+function learnCommit() local(i) (
+  lrnCnt > 0 ? (
+    ok = 1;
+    lrnTimer ? ( time_precise() - lrnT0 >= 1.0 ? 1 : ok = 0; );
+    ok ? (
+      i = 0;
+      while (i < 8) (
+        chN[curSlot*8+i] = i < lrnCnt ? lrnB[i] : -1;
+        chV[curSlot*8+i] = 100;
+        i += 1;
+      );
+      curSlot < 127 ? curSlot += 1;
+    ) : (
+      i = 0;
+      while (i < 8) (
+        chN[curSlot*8+i] = bkdB[i];
+        chV[curSlot*8+i] = bkdB[8+i];
+        i += 1;
+      );
+    );
+    lrnCnt = 0;
+    lrnMode == 3 ? ( lrn = 0; lrnMode = 0; );
+  );
+);
+
+function learnOn(n, offs) local(i, dup) (
+  lrnMode == 2 ? (
+    lrnCnt > 0 && abs(offs - lrnOffs) > learnGap ? learnCommit();
+    lrnOffs = offs;
+  ) : (
+    lrnCnt == 0 ? (
+      lrnT0 = time_precise();
+      i = 0;
+      while (i < 8) (
+        bkdB[i] = chN[curSlot*8+i];
+        bkdB[8+i] = chV[curSlot*8+i];
+        i += 1;
+      );
+      i = 0;
+      while (i < 8) (
+        chN[curSlot*8+i] = -1;
+        i += 1;
+      );
+    );
+  );
+  dup = 0;
+  i = 0;
+  while (i < lrnCnt) (
+    lrnB[i] == n ? dup = 1;
+    i += 1;
+  );
+  !dup ? (
+    lrnB[lrnCnt] = n;
+    lrnCnt += 1;
+  );
+);
+
+function inputNoteOn(n, v, ch, offs) local(i) (
+  lastInVel = v;
+  lastInChan = ch;
+  latch ? (
+    activeSlot >= 0 ? releaseChord(offs);
+    i = 0;
+    while (i < 128) ( inN[i] = 0; i += 1; );
+    arpOn ? ( wantSilence = 1; retG[pat] ? wantRetrig = 1; );
+  );
+  lrn ? (
+    lrnHeld += 1;
+    learnOn(n, offs);
+  ) : (
+    chOn ? (
+      chordTrigger(n, v, ch, offs);
+    ) : (
+      inN[n] += 1;
+      arpOn ? (
+        arpDirty = 1;
+        retG[pat] ? wantRetrig = 1;
+      ) : (
+        sendOn(offs, ch, n, v);
+      );
+    );
+  );
+);
+
+function inputNoteOff(n, ch, offs) (
+  latch ? ( 0; ) : (
+    lrn ? (
+      lrnHeld > 0 ? lrnHeld -= 1;
+      lrnHeld == 0 && lrnMode != 2 ? learnCommit();
+    ) : (
+      chOn ? (
+        inN[n] > 0 ? inN[n] -= 1;
+        activeSlot == n && inN[n] == 0 ? releaseChord(offs);
+      ) : (
+        inN[n] > 0 ? inN[n] -= 1;
+        arpOn ? ( arpDirty = 1; ) : ( sendOff(offs, ch, n); );
+      );
+    );
+  );
+);
+
+// ---- Arp module ----
+function rebuildArp() local(i, ref, pc, pcset) (
+  cnt = 0;
+  i = 0;
+  while (i < 128) (
+    ref = chOn ? actR[i] : inN[i];
+    ref > 0 ? ( helB[cnt] = i; cnt += 1; );
+    i += 1;
+  );
+  arpCnt = cnt;
+  pcset = 0;
+  i = 0;
+  while (i < cnt) (
+    pc = helB[i] % 12;
+    pcset += pw2[pc];
+    i += 1;
+  );
+  arpRoot = cnt > 0 ? hindRoot(pcset) : 0;
+  cnt == 0 ? wantSilence = 1;
+);
+
+function constrain(nn) local(st) (
+  st = conG[nn % 12];
+  st == 1 ? -1 : st == 2 ? nn + 1 : st == 3 ? nn - 1 : nn;
+);
+
+function lateFrac(s) ( latG[pat*16 + (s % max(lateLen,1))] / 100 );
+
+function trigOf(s) ( trigBase + s * L + lateFrac(s) * L );
+
+function arpFire(s) local(i, j, n, v, sN, idx0, idx, oct, P, k, jj, r, ov, pv, hv, gv, vv,
+                        nn, hn, pc, deg, root, ni, base, offT, found, ovel) (
+  n = arpCnt;
+  n == 0 ? 0 : (
+    sN = s % lenN;
+    muted = (mutG[pat] / pw2[sN]) % 2 == 1;
+    v = notG[pat*16 + sN];
+    !muted && v >= 0 ? (
+      resG[pat*16+sN] ? shapePos = 0;
+      v < 8 ? (
+        r = rndG[pat*16 + (s % lenR)];
+        idx0 = v + (r > 0 ? floor(rand(r+1)) : r < 0 ? -floor(rand(1-r)) : 0);
+        idx = idx0 - n * floor(idx0 / n);
+        oct = floor(idx0 / n);
+      ) : v == 8 ? (
+        idx = shapePos % n;
+        oct = floor(shapePos / n);
+      ) : v == 9 ? (
+        idx = n - 1 - (shapePos % n);
+        oct = -(floor(shapePos / n));
+      ) : v == 10 ? (
+        P = max(2*n - 2, 1);
+        k = shapePos % P;
+        idx = k < n ? k : 2*n - 2 - k;
+        oct = 0;
+      ) : v == 11 ? (
+        P = max(2*n - 2, 1);
+        k = shapePos % P;
+        idx = k < n ? n - 1 - k : k - n + 1;
+        oct = 0;
+      ) : v == 12 ? (
+        P = 2*n;
+        k = shapePos % P;
+        idx = k < n ? k : 2*n - 1 - k;
+        oct = 0;
+      ) : v == 13 ? (
+        P = 2*n;
+        k = shapePos % P;
+        idx = k < n ? n - 1 - k : k - n;
+        oct = 0;
+      ) : v == 14 ? (
+        jj = floor(shapePos / 2);
+        shapePos % 2 == 0 ? ( idx = jj % n; oct = floor(jj / n); )
+                          : ( idx = n - 1; oct = 0; );
+      ) : (
+        jj = floor(shapePos / 2);
+        shapePos % 2 == 0 ? ( idx = n - 1 - (jj % n); oct = -(floor(jj / n)); )
+                          : ( idx = 0; oct = 0; );
+      );
+      v >= 8 ? shapePos += 1;
+      base = helB[idx] + 12 * oct;
+      ov = octG[pat*16 + (s % lenO)];
+      pv = pitG[pat*16 + (s % lenP)];
+      root = arpRoot;
+      outCnt = 0;
+      chmG[pat] ? (
+        i = 0;
+        while (i < n) (
+          ni = idx + i;
+          nn = helB[ni % n] + 12 * floor(ni / n) + 12 * oct + 12 * ov;
+          pv != 0 ? (
+            pc = nn % 12;
+            pc < 0 ? pc += 12;
+            penG[degreeOf((pc - root + 120) % 12) - 1] ? nn += pv;
+          );
+          nn = constrain(nn);
+          nn >= 0 && outCnt < 24 ? ( oB[outCnt] = nn; outCnt += 1; );
+          i += 1;
+        );
+      ) : (
+        nn = base + 12 * ov;
+        pv != 0 ? (
+          pc = nn % 12;
+          pc < 0 ? pc += 12;
+          penG[degreeOf((pc - root + 120) % 12) - 1] ? nn += pv;
+        );
+        nn = constrain(nn);
+        nn >= 0 ? ( oB[outCnt] = nn; outCnt += 1; );
+      );
+      hv = harG[pat*16 + (s % lenH)];
+      hv != 0 ? (
+        hn = constrain(base + 12 * ov + hv);
+        hn >= 0 ? ( oB[outCnt] = hn; outCnt += 1; );
+      );
+      vv = velG[pat*16 + (s % lenV)];
+      ovel = max(1, min(127, floor(lastInVel * vv / 100 + 0.5)));
+      gv = gatG[pat*16 + (s % lenG2)];
+      offT = gv >= 100 ? now + 1000000000 : now + gv * L / 100;
+      // release sounding notes that are not re-struck (ties hold)
+      i = 0;
+      while (i < sndCnt) (
+        found = 0;
+        j = 0;
+        while (j < outCnt) (
+          oB[j] == sndN[i] && outChan == sndC[i] ? found = 1;
+          j += 1;
+        );
+        found ? ( sndO[i] = offT; i += 1; ) : (
+          sendOff(0, sndC[i], sndN[i]);
+          sndN[i] = sndN[sndCnt-1];
+          sndC[i] = sndC[sndCnt-1];
+          sndO[i] = sndO[sndCnt-1];
+          sndCnt -= 1;
+        );
+      );
+      // strike new notes
+      i = 0;
+      while (i < outCnt) (
+        found = 0;
+        j = 0;
+        while (j < sndCnt) (
+          sndN[j] == oB[i] && sndC[j] == outChan ? found = 1;
+          j += 1;
+        );
+        !found && sndCnt < 16 ? (
+          sendOn(0, outChan, oB[i], ovel);
+          sndN[sndCnt] = oB[i];
+          sndC[sndCnt] = outChan;
+          sndO[sndCnt] = offT;
+          sndCnt += 1;
+        );
+        i += 1;
+      );
+      lastOutNote = outCnt > 0 ? oB[outCnt-1] : -1;
+    );
+  );
+  lastFired = s;
+);
+
+// ---- chord slot utilities ----
+function slotUsed(sl) local(v) (
+  u = 0;
+  v = 0;
+  while (v < 8) (
+    chN[sl*8+v] >= 0 ? u = 1;
+    v += 1;
+  );
+  u;
+);
+
+function slotCopy(dst, src) local(v) (
+  v = 0;
+  while (v < 8) (
+    chN[dst*8+v] = chN[src*8+v];
+    chV[dst*8+v] = chV[src*8+v];
+    v += 1;
+  );
+);
+
+function slotClear(sl) local(v) (
+  v = 0;
+  while (v < 8) (
+    chN[sl*8+v] = -1;
+    chV[sl*8+v] = 100;
+    v += 1;
+  );
+);
+
+function collapseSlots() local(s, d, v) (
+  d = 0;
+  s = 0;
+  while (s < 128) (
+    slotUsed(s) ? (
+      d != s ? slotCopy(d, s);
+      d += 1;
+    );
+    s += 1;
+  );
+  s = d;
+  while (s < 128) (
+    slotClear(s);
+    s += 1;
+  );
+);
+
+function sortSlots(mode) local(i, v, nn, lo, hi, cnt, pcset, root, k, j, id, src) (
+  i = 0;
+  while (i < 128) (
+    lo = 999; hi = -1; cnt = 0; pcset = 0;
+    v = 0;
+    while (v < 8) (
+      nn = chN[i*8+v];
+      nn >= 0 ? (
+        nn < lo ? lo = nn;
+        nn > hi ? hi = nn;
+        cnt += 1;
+        pcset += pw2[nn % 12];
+      );
+      v += 1;
+    );
+    root = cnt > 0 ? hindRoot(pcset) : 0;
+    k = mode == 0 ? (cnt > 0 ? lo : 1000000000) :
+        mode == 1 ? (cnt > 0 ? (lo % 12) * 128 + lo : 1000000000) :
+        mode == 2 ? (cnt > 0 ? hi : 1000000000) :
+        mode == 3 ? (cnt > 0 ? -cnt * 128 + lo : 1000000000) :
+        mode == 4 ? (cnt > 0 ? root * 128 + lo : 1000000000) :
+        (cnt > 0 ? ((root * 7) % 12) * 128 + lo : 1000000000);
+    keyB[i] = k;
+    sortB[i] = i;
+    i += 1;
+  );
+  i = 1;
+  while (i < 128) (
+    k = keyB[i];
+    id = sortB[i];
+    j = i - 1;
+    while (j >= 0 && keyB[j] > k) (
+      keyB[j+1] = keyB[j];
+      sortB[j+1] = sortB[j];
+      j -= 1;
+    );
+    keyB[j+1] = k;
+    sortB[j+1] = id;
+    i += 1;
+  );
+  i = 0;
+  while (i < 1024) (
+    sortT[i] = chN[i];
+    sortT[i+1024] = chV[i];
+    i += 1;
+  );
+  i = 0;
+  while (i < 128) (
+    src = sortB[i];
+    v = 0;
+    while (v < 8) (
+      chN[i*8+v] = sortT[src*8+v];
+      chV[i*8+v] = sortT[1024 + src*8+v];
+      v += 1;
+    );
+    i += 1;
+  );
+);
+
+function slotSortNotes(sl) local(i, j, nn, vv) (
+  i = 1;
+  while (i < 8) (
+    nn = chN[sl*8+i];
+    vv = chV[sl*8+i];
+    j = i - 1;
+    while (j >= 0 && ((nn >= 0 && chN[sl*8+j] < 0) || (nn >= 0 && chN[sl*8+j] > nn))) (
+      chN[sl*8+j+1] = chN[sl*8+j];
+      chV[sl*8+j+1] = chV[sl*8+j];
+      j -= 1;
+    );
+    chN[sl*8+j+1] = nn;
+    chV[sl*8+j+1] = vv;
+    i += 1;
+  );
+);
+
+function makeThird(delta) local(s, v, nn, pcset, cnt, root, tpc, iv, ti) (
+  s = 0;
+  while (s < 128) (
+    pcset = 0; cnt = 0;
+    v = 0;
+    while (v < 8) (
+      nn = chN[s*8+v];
+      nn >= 0 ? ( pcset += pw2[nn % 12]; cnt += 1; );
+      v += 1;
+    );
+    cnt >= 2 ? (
+      root = hindRoot(pcset);
+      tpc = -1;
+      (pcset / pw2[(root+3)%12]) % 2 == 1 ? tpc = (root+3) % 12;
+      (pcset / pw2[(root+4)%12]) % 2 == 1 ? tpc = (root+4) % 12;
+      tpc >= 0 ? (
+        ti = -1;
+        v = 0;
+        while (v < 8 && ti < 0) (
+          nn = chN[s*8+v];
+          nn >= 0 && nn % 12 == tpc ? ti = v;
+          v += 1;
+        );
+        ti >= 0 ? (
+          iv = (tpc - root + 12) % 12;
+          iv == 4 && delta == 3 ? chN[s*8+ti] -= 1;
+          iv == 3 && delta == 4 ? chN[s*8+ti] += 1;
+          (iv == 3 || iv == 4) && delta == 5 ? chN[s*8+ti] += 5 - iv;
+        );
+      );
+    );
+    s += 1;
+  );
+);
+
+function transformPrevent() local(s, v, nn, st) (
+  s = 0;
+  while (s < 128) (
+    v = 0;
+    while (v < 8) (
+      nn = chN[s*8+v];
+      nn >= 0 ? (
+        st = conG[nn % 12];
+        st == 1 ? chN[s*8+v] = -1 :
+        st == 2 ? chN[s*8+v] = nn + 1 :
+        st == 3 ? chN[s*8+v] = nn - 1;
+      );
+      v += 1;
+    );
+    s += 1;
+  );
+);
+
+function transformMatch() local(cnt, v, nn, s, p, i, j, t, oct, cand) (
+  cnt = 0;
+  v = 0;
+  while (v < 8) (
+    nn = chN[curSlot*8+v];
+    nn >= 0 ? ( pcsB[cnt] = nn % 12; cnt += 1; );
+    v += 1;
+  );
+  // dedupe
+  i = 0;
+  while (i < cnt) (
+    j = i + 1;
+    while (j < cnt) (
+      pcsB[i] == pcsB[j] ? ( pcsB[j] = pcsB[cnt-1]; cnt -= 1; j -= 1; );
+      j += 1;
+    );
+    i += 1;
+  );
+  // sort ascending
+  i = 1;
+  while (i < cnt) (
+    t = pcsB[i];
+    j = i - 1;
+    while (j >= 0 && pcsB[j] > t) (
+      pcsB[j+1] = pcsB[j];
+      j -= 1;
+    );
+    pcsB[j+1] = t;
+    i += 1;
+  );
+  cnt == 0 ? 0 : (
+    s = 0;
+    while (s < 128) (
+      v = 0;
+      while (v < 8) (
+        nn = chN[s*8+v];
+        nn >= 0 ? (
+          p = pcsB[v % cnt];
+          oct = floor(nn / 12);
+          cand = oct * 12 + p;
+          cand > nn + 6 ? cand -= 12;
+          cand < nn - 6 ? cand += 12;
+          cand < 0 ? cand += 12;
+          cand > 127 ? cand -= 12;
+          chN[s*8+v] = cand;
+        );
+        v += 1;
+      );
+      s += 1;
+    );
+  );
+);
+
+function populateEmpty() local(s, v, empty, src, d, a, nn, t) (
+  s = 0;
+  while (s < 128) (
+    empty = 1;
+    v = 0;
+    while (v < 8 && empty) (
+      chN[s*8+v] >= 0 ? empty = 0;
+      v += 1;
+    );
+    empty ? (
+      src = -1;
+      d = 1;
+      while (src < 0 && d < 128) (
+        a = s - d;
+        a >= 0 && slotUsed(a) ? src = a;
+        a = s + d;
+        a < 128 && src < 0 && slotUsed(a) ? src = a;
+        d += 1;
+      );
+      src >= 0 ? (
+        v = 0;
+        while (v < 8) (
+          nn = chN[src*8+v];
+          nn >= 0 ? (
+            t = nn + (s - src);
+            while (t > 127) ( t -= 12; );
+            while (t < 0) ( t += 12; );
+            chN[s*8+v] = t;
+          );
+          v += 1;
+        );
+      );
+    );
+    s += 1;
+  );
+);
+
+function removeDups() local(s, t, v, same, a, b) (
+  s = 0;
+  while (s < 128) (
+    slotSortNotes(s);
+    s += 1;
+  );
+  s = 0;
+  while (s < 128) (
+    slotUsed(s) ? (
+      t = s + 1;
+      while (t < 128) (
+        slotUsed(t) ? (
+          same = 1;
+          v = 0;
+          while (v < 8 && same) (
+            a = chN[s*8+v];
+            b = chN[t*8+v];
+            !((a < 0 && b < 0) || a == b) ? same = 0;
+            v += 1;
+          );
+          same ? slotClear(t);
+        );
+        t += 1;
+      );
+    );
+    s += 1;
+  );
+  collapseSlots();
+);
+
+function removeNNotes(k) local(s, v, cnt, nn) (
+  s = 0;
+  while (s < 128) (
+    cnt = 0;
+    v = 0;
+    while (v < 8) (
+      chN[s*8+v] >= 0 ? cnt += 1;
+      v += 1;
+    );
+    cnt == k ? slotClear(s);
+    s += 1;
+  );
+  collapseSlots();
+);
+
+function removeUnwatched() local(s) (
+  s = 0;
+  while (s < 128) (
+    !watB[s] ? slotClear(s);
+    s += 1;
+  );
+  collapseSlots();
+);
+
+function wtfChord() local(v, t, cnt, root, i, nn) (
+  v = 0;
+  while (v < 8) (
+    lkOn[v] ? 0 : chN[curSlot*8+v] = -1;
+    v += 1;
+  );
+  t = floor(rand(12));
+  root = 48 + floor(rand(24));
+  t == 0 ? ( // maj
+    chN[curSlot*8+0] = root; chN[curSlot*8+1] = root+4; chN[curSlot*8+2] = root+7;
+  ) : t == 1 ? ( // min
+    chN[curSlot*8+0] = root; chN[curSlot*8+1] = root+3; chN[curSlot*8+2] = root+7;
+  ) : t == 2 ? ( // dom7
+    chN[curSlot*8+0] = root; chN[curSlot*8+1] = root+4; chN[curSlot*8+2] = root+7; chN[curSlot*8+3] = root+10;
+  ) : t == 3 ? ( // m7
+    chN[curSlot*8+0] = root; chN[curSlot*8+1] = root+3; chN[curSlot*8+2] = root+7; chN[curSlot*8+3] = root+10;
+  ) : t == 4 ? ( // maj7
+    chN[curSlot*8+0] = root; chN[curSlot*8+1] = root+4; chN[curSlot*8+2] = root+7; chN[curSlot*8+3] = root+11;
+  ) : t == 5 ? ( // dim7
+    chN[curSlot*8+0] = root; chN[curSlot*8+1] = root+3; chN[curSlot*8+2] = root+6; chN[curSlot*8+3] = root+9;
+  ) : t == 6 ? ( // sus4
+    chN[curSlot*8+0] = root; chN[curSlot*8+1] = root+5; chN[curSlot*8+2] = root+7;
+  ) : t == 7 ? ( // aug
+    chN[curSlot*8+0] = root; chN[curSlot*8+1] = root+4; chN[curSlot*8+2] = root+8;
+  ) : t == 8 ? ( // 6
+    chN[curSlot*8+0] = root; chN[curSlot*8+1] = root+4; chN[curSlot*8+2] = root+7; chN[curSlot*8+3] = root+9;
+  ) : t == 9 ? ( // min6
+    chN[curSlot*8+0] = root; chN[curSlot*8+1] = root+3; chN[curSlot*8+2] = root+7; chN[curSlot*8+3] = root+9;
+  ) : t == 10 ? ( // 9
+    chN[curSlot*8+0] = root; chN[curSlot*8+1] = root+4; chN[curSlot*8+2] = root+7; chN[curSlot*8+3] = root+10; chN[curSlot*8+4] = root+14;
+  ) : ( // m9
+    chN[curSlot*8+0] = root; chN[curSlot*8+1] = root+3; chN[curSlot*8+2] = root+7; chN[curSlot*8+3] = root+10; chN[curSlot*8+4] = root+14;
+  );
+  v = 0;
+  while (v < 8) (
+    chV[curSlot*8+v] = 100;
+    v += 1;
+  );
+);
+
+// ---- arp graph utilities ----
+function setGraphVal(tab, col, val) local(v) (
+  v = tab == 0 ? max(-1, min(15, val)) :
+      tab == 1 ? max(-8, min(8, val)) :
+      tab == 2 ? max(-8, min(8, val)) :
+      tab == 3 ? max(-12, min(12, val)) :
+      tab == 4 ? max(0, min(200, val)) :
+      tab == 5 ? max(0, min(100, val)) :
+      tab == 6 ? max(-100, min(100, val)) :
+      max(-12, min(12, val));
+  tab == 0 ? notG[pat*16+col] = v :
+  tab == 1 ? rndG[pat*16+col] = v :
+  tab == 2 ? octG[pat*16+col] = v :
+  tab == 3 ? pitG[pat*16+col] = v :
+  tab == 4 ? velG[pat*16+col] = v :
+  tab == 5 ? gatG[pat*16+col] = v :
+  tab == 6 ? latG[pat*16+col] = v :
+  harG[pat*16+col] = v;
+);
+
+function graphVal(tab, col) (
+  tab == 0 ? notG[pat*16+col] :
+  tab == 1 ? rndG[pat*16+col] :
+  tab == 2 ? octG[pat*16+col] :
+  tab == 3 ? pitG[pat*16+col] :
+  tab == 4 ? velG[pat*16+col] :
+  tab == 5 ? gatG[pat*16+col] :
+  tab == 6 ? latG[pat*16+col] :
+  harG[pat*16+col];
+);
+
+function graphCopy() local(i) (
+  i = 0;
+  while (i < 16) (
+    gcp[i] = graphVal(curGraph, i);
+    i += 1;
+  );
+  gcpLen = lenG[pat*8+curGraph];
+  gcpDiv = cdvG[pat*8+curGraph];
+);
+
+function graphPaste() local(i) (
+  i = 0;
+  while (i < 16) (
+    setGraphVal(curGraph, i, gcp[i]);
+    i += 1;
+  );
+  lenG[pat*8+curGraph] = gcpLen;
+  cdvG[pat*8+curGraph] = gcpDiv;
+);
+
+function graphRand() local(i) (
+  curGraph == 0 ? (
+    i = 0;
+    while (i < 16) (
+      r = rand(20);
+      r < 2 ? setGraphVal(0, i, -1) :
+      r < 10 ? setGraphVal(0, i, r - 2) :
+      setGraphVal(0, i, 8 + floor(rand(8)));
+      i += 1;
+    );
+  ) : curGraph == 1 ? (
+    i = 0;
+    while (i < 16) ( setGraphVal(1, i, floor(rand(17)) - 8); i += 1; );
+  ) : curGraph == 2 ? (
+    i = 0;
+    while (i < 16) ( setGraphVal(2, i, floor(rand(5)) - 2); i += 1; );
+  ) : curGraph == 3 ? (
+    i = 0;
+    while (i < 16) ( setGraphVal(3, i, floor(rand(9)) - 4); i += 1; );
+  ) : curGraph == 4 ? (
+    i = 0;
+    while (i < 16) ( setGraphVal(4, i, 60 + floor(rand(141))); i += 1; );
+  ) : curGraph == 5 ? (
+    i = 0;
+    while (i < 16) ( setGraphVal(5, i, 20 + floor(rand(81))); i += 1; );
+  ) : curGraph == 6 ? (
+    i = 0;
+    while (i < 16) ( setGraphVal(6, i, floor(rand(101)) - 50); i += 1; );
+  ) : (
+    i = 0;
+    while (i < 16) ( setGraphVal(7, i, floor(rand(13)) - 6); i += 1; );
+  );
+);
+
+function patternCopy(from, to) local(i, g) (
+  g = 0;
+  while (g < 8) (
+    i = 0;
+    while (i < 16) (
+      g == 0 ? notG[to*16+i] = notG[from*16+i] :
+      g == 1 ? rndG[to*16+i] = rndG[from*16+i] :
+      g == 2 ? octG[to*16+i] = octG[from*16+i] :
+      g == 3 ? pitG[to*16+i] = pitG[from*16+i] :
+      g == 4 ? velG[to*16+i] = velG[from*16+i] :
+      g == 5 ? gatG[to*16+i] = gatG[from*16+i] :
+      g == 6 ? latG[to*16+i] = latG[from*16+i] :
+      harG[to*16+i] = harG[from*16+i];
+      i += 1;
+    );
+    lenG[to*8+g] = lenG[from*8+g];
+    cdvG[to*8+g] = cdvG[from*8+g];
+    g += 1;
+  );
+  ratG[to] = ratG[from];
+  retG[to] = retG[from];
+  chmG[to] = chmG[from];
+  mutG[to] = mutG[from];
+  pat = to;
+);
+
+function arpPatternDefaults(p) local(i) (
+  i = 0;
+  while (i < 16) (
+    notG[p*16+i] = -1;
+    rndG[p*16+i] = 0;
+    octG[p*16+i] = 0;
+    pitG[p*16+i] = 0;
+    velG[p*16+i] = 100;
+    gatG[p*16+i] = 100;
+    latG[p*16+i] = 0;
+    harG[p*16+i] = 0;
+    resG[p*16+i] = 0;
+    i += 1;
+  );
+  mutG[p] = 0;
+  i = 0;
+  while (i < 8) (
+    lenG[p*8+i] = 16;
+    cdvG[p*8+i] = 1;
+    i += 1;
+  );
+  ratG[p] = 8;
+  retG[p] = 0;
+  chmG[p] = 0;
+  lnkG[p] = 0;
+);
+
+function applyArpPreset(pr) local(i) (
+  arpPatternDefaults(pat);
+  pr == 0 ? ( i = 0; while (i < 16) ( notG[pat*16+i] = 8; i += 1; ); ) :
+  pr == 1 ? ( i = 0; while (i < 16) ( notG[pat*16+i] = 9; i += 1; ); ) :
+  pr == 2 ? ( i = 0; while (i < 16) ( notG[pat*16+i] = 10; i += 1; ); ) :
+  pr == 3 ? ( i = 0; while (i < 16) ( notG[pat*16+i] = 11; i += 1; ); ) :
+  pr == 4 ? ( i = 0; while (i < 16) ( notG[pat*16+i] = 12; i += 1; ); ) :
+  pr == 5 ? ( i = 0; while (i < 16) ( notG[pat*16+i] = 14; i += 1; ); ) :
+  pr == 6 ? ( i = 0; while (i < 16) ( notG[pat*16+i] = 15; i += 1; ); ) :
+  pr == 7 ? ( i = 0; while (i < 16) ( notG[pat*16+i] = floor(rand(8)); i += 1; ); ) :
+  pr == 8 ? (
+    i = 0;
+    while (i < 16) ( notG[pat*16+i] = 8; i += 1; );
+    i = 0;
+    while (i < 16) (
+      i < 4 ? octG[pat*16+i] = 0 :
+      i < 8 ? octG[pat*16+i] = 1 :
+      i < 12 ? octG[pat*16+i] = 2 :
+      i < 15 ? octG[pat*16+i] = 1 :
+      octG[pat*16+i] = 0;
+      i += 1;
+    );
+  ) : 0;
+);
+
+function applyChordPreset(pr) local(s, v) (
+  s = 0;
+  while (s < 128) (
+    v = 0;
+    while (v < 8) (
+      chN[s*8+v] = -1;
+      chV[s*8+v] = 100;
+      v += 1;
+    );
+    s += 1;
+  );
+  pr <= 10 ? (
+    s = 0;
+    while (s < 128) (
+      pr == 0 ? ( chN[s*8+0] = s; chN[s*8+1] = s+3; chN[s*8+2] = s+7; ) :
+      pr == 1 ? ( chN[s*8+0] = s; chN[s*8+1] = s+4; chN[s*8+2] = s+7; ) :
+      pr == 2 ? ( chN[s*8+0] = s; chN[s*8+1] = s+3; chN[s*8+2] = s+7; chN[s*8+3] = s+10; ) :
+      pr == 3 ? ( chN[s*8+0] = s; chN[s*8+1] = s+4; chN[s*8+2] = s+7; chN[s*8+3] = s+11; ) :
+      pr == 4 ? ( chN[s*8+0] = s; chN[s*8+1] = s+4; chN[s*8+2] = s+7; chN[s*8+3] = s+10; ) :
+      pr == 5 ? ( chN[s*8+0] = s; chN[s*8+1] = s+3; chN[s*8+2] = s+6; chN[s*8+3] = s+9; ) :
+      pr == 6 ? ( chN[s*8+0] = s; chN[s*8+1] = s+5; chN[s*8+2] = s+7; ) :
+      pr == 7 ? ( chN[s*8+0] = s; chN[s*8+1] = s+4; chN[s*8+2] = s+8; ) :
+      pr == 8 ? ( chN[s*8+0] = s; chN[s*8+1] = s+7; ) :
+      pr == 9 ? ( chN[s*8+0] = s; chN[s*8+1] = s+4; chN[s*8+2] = s+7; chN[s*8+3] = s+9; ) :
+      ( chN[s*8+0] = s; chN[s*8+1] = s+3; chN[s*8+2] = s+7; chN[s*8+3] = s+10; chN[s*8+4] = s+14; );
+      // wrap down an octave if out of MIDI range
+      mxn = chN[s*8+0];
+      mxn < chN[s*8+1] ? mxn = chN[s*8+1];
+      mxn < chN[s*8+2] ? mxn = chN[s*8+2];
+      mxn < chN[s*8+3] ? mxn = chN[s*8+3];
+      mxn < chN[s*8+4] ? mxn = chN[s*8+4];
+      mxn > 127 ? (
+        v = 0;
+        while (v < 8) (
+          chN[s*8+v] >= 0 ? chN[s*8+v] -= 12;
+          v += 1;
+        );
+      );
+      s += 1;
+    );
+  ) : pr == 11 ? ( 0; ) : // silence
+  pr == 12 ? (
+    chN[48*8+0] = 48; chN[48*8+1] = 52; chN[48*8+2] = 55;
+    chN[55*8+0] = 55; chN[55*8+1] = 59; chN[55*8+2] = 62;
+    chN[57*8+0] = 57; chN[57*8+1] = 60; chN[57*8+2] = 64;
+    chN[53*8+0] = 53; chN[53*8+1] = 57; chN[53*8+2] = 60;
+  ) : pr == 13 ? (
+    chN[57*8+0] = 57; chN[57*8+1] = 60; chN[57*8+2] = 64;
+    chN[53*8+0] = 53; chN[53*8+1] = 57; chN[53*8+2] = 60;
+    chN[48*8+0] = 48; chN[48*8+1] = 52; chN[48*8+2] = 55;
+    chN[55*8+0] = 55; chN[55*8+1] = 59; chN[55*8+2] = 62;
+  ) : pr == 14 ? (
+    chN[55*8+0] = 55; chN[55*8+1] = 59; chN[55*8+2] = 62;
+    chN[52*8+0] = 52; chN[52*8+1] = 55; chN[52*8+2] = 59;
+    chN[48*8+0] = 48; chN[48*8+1] = 52; chN[48*8+2] = 55;
+    chN[50*8+0] = 50; chN[50*8+1] = 54; chN[50*8+2] = 57;
+  );
+);
+
+function previewChord(n, ch) local(i, nn, vel, cnt) (
+  cnt = 0;
+  i = 0;
+  while (i < 8) (
+    nn = lkOn[i] ? lkN[i] : chN[n*8+i];
+    nn >= 0 && cnt < 8 ? (
+      vel = max(1, min(127, floor(100 * chV[n*8+i] / 100 + 0.5)));
+      sendOn(0, ch, nn + trans, vel);
+      prvN[cnt] = nn + trans;
+      prvC[cnt] = ch;
+      prvT[cnt] = time_precise() + 0.18;
+      cnt += 1;
+    );
+    i += 1;
+  );
+  prvCnt = cnt;
+);
+
+function previewOffs() local(i) (
+  i = 0;
+  while (i < prvCnt) (
+    time_precise() >= prvT[i] ? (
+      sendOff(0, prvC[i], prvN[i]);
+      prvN[i] = prvN[prvCnt-1];
+      prvC[i] = prvC[prvCnt-1];
+      prvT[i] = prvT[prvCnt-1];
+      prvCnt -= 1;
+      i -= 1;
+    );
+    i += 1;
+  );
+);
+
+// ---- GUI helpers ----
+
+function px(x) ( ox + x * sc );
+function py(y) ( oy + y * sc );
+
+function drwText(s, x, y, sz, r, g, b) (
+  gfx_setfont(1, "Arial", max(8, floor(sz * sc)));
+  setc(r, g, b);
+  gfx_x = px(x);
+  gfx_y = py(y);
+  gfx_printf("%s", s);
+);
+
+function drwTextC(s, cx, y, sz, r, g, b) local(w, h) (
+  gfx_setfont(1, "Arial", max(8, floor(sz * sc)));
+  gfx_measurestr(s, w, h);
+  setc(r, g, b);
+  gfx_x = px(cx) - w / 2;
+  gfx_y = py(y);
+  gfx_printf("%s", s);
+);
+
+function inRect(x, y, rx, ry, rw, rh) (
+  x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+);
+
+function btn(x, y, w, h, lab, on, accR, accG, accB) (
+  frect(px(x), py(y), w*sc, h*sc,
+    on ? accR : 22,
+    on ? accG : 25,
+    on ? accB : 32);
+  gfx_r = 45; gfx_g = 50; gfx_b = 60; gfx_a = 1;
+  gfx_rect(px(x), py(y), w*sc, h*sc);
+  drwTextC(lab, x + w/2, y + (h-9)/2, 9, on ? 10 : 150, on ? 12 : 155, on ? 14 : 170);
+);
+
+function knob(x, y, r, val, vmin, vmax) local(a) (
+  frect(px(x-r), py(y-r), 2*r*sc, 2*r*sc, 30, 34, 42);
+  gfx_circle(px(x), py(y), r*sc, 0, 1);
+  gfx_r = 190; gfx_g = 195; gfx_b = 205; gfx_a = 1;
+  gfx_circle(px(x), py(y), (r-3)*sc, 1, 1);
+  a = (val - vmin) / max(vmax - vmin, 0.0001) * 1.5 * $pi - 0.75 * $pi;
+  gfx_r = 100; gfx_g = 205; gfx_b = 120; gfx_a = 1;
+  gfx_line(px(x), py(y), px(x + cos(a) * (r-5)), py(y + sin(a) * (r-5)), 1);
+);
+
+function drawNoteSym(x, y, w, h, val) local(cx) (
+  cx = x + w / 2;
+  val < 0 ? ( 0; ) : (
+    val < 8 ? (
+      #vs = sprintf(#, "%d", val + 1);
+      drwTextC(#vs, cx, y + h/2 - 6, 10, 220, 225, 235);
+    ) : val == 8 ? (
+      gfx_r = 100; gfx_g = 205; gfx_b = 120; gfx_a = 1;
+      gfx_line(px(cx), py(y+h-5), px(cx), py(y+4));
+      gfx_line(px(cx-4), py(y+10), px(cx), py(y+4));
+      gfx_line(px(cx+4), py(y+10), px(cx), py(y+4));
+    ) : val == 9 ? (
+      gfx_r = 100; gfx_g = 205; gfx_b = 120; gfx_a = 1;
+      gfx_line(px(cx), py(y+4), px(cx), py(y+h-5));
+      gfx_line(px(cx-4), py(y+h-10), px(cx), py(y+h-4));
+      gfx_line(px(cx+4), py(y+h-10), px(cx), py(y+h-4));
+    ) : val == 10 ? (
+      gfx_r = 100; gfx_g = 205; gfx_b = 120; gfx_a = 1;
+      gfx_line(px(cx), py(y+3), px(cx), py(y+h-3));
+      gfx_line(px(cx-4), py(y+9), px(cx), py(y+3));
+      gfx_line(px(cx+4), py(y+9), px(cx), py(y+3));
+      gfx_line(px(cx-4), py(y+h-9), px(cx), py(y+h-3));
+      gfx_line(px(cx+4), py(y+h-9), px(cx), py(y+h-3));
+    ) : val == 11 ? (
+      gfx_r = 100; gfx_g = 205; gfx_b = 120; gfx_a = 1;
+      gfx_line(px(cx), py(y+3), px(cx), py(y+h-3));
+      gfx_line(px(cx-4), py(y+3), px(cx), py(y+9));
+      gfx_line(px(cx+4), py(y+3), px(cx), py(y+9));
+      gfx_line(px(cx-4), py(y+h-3), px(cx), py(y+h-9));
+      gfx_line(px(cx+4), py(y+h-3), px(cx), py(y+h-9));
+    ) : val == 12 ? (
+      gfx_r = 100; gfx_g = 205; gfx_b = 120; gfx_a = 1;
+      gfx_line(px(cx-5), py(y+2), px(cx+5), py(y+2));
+      gfx_line(px(cx), py(y+4), px(cx), py(y+h-4));
+      gfx_line(px(cx-5), py(y+h-2), px(cx+5), py(y+h-2));
+      gfx_line(px(cx-4), py(y+10), px(cx), py(y+4));
+      gfx_line(px(cx+4), py(y+10), px(cx), py(y+4));
+      gfx_line(px(cx-4), py(y+h-10), px(cx), py(y+h-4));
+      gfx_line(px(cx+4), py(y+h-10), px(cx), py(y+h-4));
+    ) : val == 13 ? (
+      gfx_r = 100; gfx_g = 205; gfx_b = 120; gfx_a = 1;
+      gfx_line(px(cx-5), py(y+2), px(cx+5), py(y+2));
+      gfx_line(px(cx), py(y+4), px(cx), py(y+h-4));
+      gfx_line(px(cx-5), py(y+h-2), px(cx+5), py(y+h-2));
+      gfx_line(px(cx-4), py(y+4), px(cx), py(y+10));
+      gfx_line(px(cx+4), py(y+4), px(cx), py(y+10));
+      gfx_line(px(cx-4), py(y+h-4), px(cx), py(y+h-10));
+      gfx_line(px(cx+4), py(y+h-4), px(cx), py(y+h-10));
+    ) : val == 14 ? (
+      gfx_r = 100; gfx_g = 205; gfx_b = 120; gfx_a = 1;
+      gfx_line(px(cx-4), py(y+2), px(cx+4), py(y+2));
+      gfx_line(px(x+3), py(y+h-7), px(cx), py(y+7));
+      gfx_line(px(cx), py(y+7), px(x+w-3), py(y+h-7));
+    ) : (
+      gfx_r = 100; gfx_g = 205; gfx_b = 120; gfx_a = 1;
+      gfx_line(px(cx-4), py(y+h-2), px(cx+4), py(y+h-2));
+      gfx_line(px(x+3), py(y+7), px(cx), py(y+h-7));
+      gfx_line(px(cx), py(y+h-7), px(x+w-3), py(y+7));
+    );
+  );
+);
+
+function cellYToVal(tab, y) local(f) (
+  f = (y - 48) / 296;
+  tab == 0 ? 15 - floor(f * 17) :
+  tab == 1 ? 8 - floor(f * 17) :
+  tab == 2 ? 8 - floor(f * 17) :
+  tab == 3 ? 12 - floor(f * 25) :
+  tab == 4 ? 200 - floor(f * 201) :
+  tab == 5 ? 100 - floor(f * 101) :
+  tab == 6 ? 100 - floor(f * 201) :
+  12 - floor(f * 25);
+);
+
+function menuLabel(mid, idx) (
+  mid == 1 ? (
+    idx == 0 ? "Sort by Low Note" :
+    idx == 1 ? "Sort by Low (Pitch Class)" :
+    idx == 2 ? "Sort by High Note" :
+    idx == 3 ? "Sort by Note Count" :
+    idx == 4 ? "Sort by Root (Chromatic)" :
+    idx == 5 ? "Sort by Root (Circle 5ths)" :
+    idx == 6 ? "-" :
+    idx == 7 ? "Remove Duplicates" :
+    idx == 8 ? "Remove 1-Note Chords" :
+    idx == 9 ? "Remove 2-Note Chords" :
+    idx == 10 ? "Remove 3-Note Chords" :
+    idx == 11 ? "Remove Unwatched" :
+    idx == 12 ? "-" :
+    idx == 13 ? "Make Majors Minor" :
+    idx == 14 ? "Make Minors Major" :
+    idx == 15 ? "Make All Suspended" :
+    idx == 16 ? "-" :
+    idx == 17 ? "Transform: Note-Prevent Rules" :
+    idx == 18 ? "Transform: Match Selected Chord" :
+    idx == 19 ? "Populate Empty Slots" :
+    idx == 20 ? "-" :
+    "Clear All Slots";
+  ) : mid == 2 ? (
+    idx == 0 ? "Minor Triads (Chromatic)" :
+    idx == 1 ? "Major Triads (Chromatic)" :
+    idx == 2 ? "Minor 7ths" :
+    idx == 3 ? "Major 7ths" :
+    idx == 4 ? "Dominant 7ths" :
+    idx == 5 ? "Diminished 7ths" :
+    idx == 6 ? "Sus4 Triads" :
+    idx == 7 ? "Augmented Triads" :
+    idx == 8 ? "Power Chords (5ths)" :
+    idx == 9 ? "Major 6ths" :
+    idx == 10 ? "Minor 9ths" :
+    idx == 11 ? "Silence (Empty)" :
+    idx == 12 ? "Prog: C I-V-vi-IV" :
+    idx == 13 ? "Prog: Am i-VI-III-VII" :
+    "Prog: G I-vi-IV-V";
+  ) : (
+    idx == 0 ? "Up 16ths" :
+    idx == 1 ? "Down 16ths" :
+    idx == 2 ? "Up/Down" :
+    idx == 3 ? "Down/Up" :
+    idx == 4 ? "Up+Down (Bounce)" :
+    idx == 5 ? "Fingered Top" :
+    idx == 6 ? "Fingered Bottom" :
+    idx == 7 ? "Random Selection" :
+    idx == 8 ? "Octave Sweep" :
+    "Clear";
+  );
+);
+
+function doMenuAction(mid, idx) local(s) (
+  mid == 1 ? (
+    idx == 0 ? sortSlots(0) :
+    idx == 1 ? sortSlots(1) :
+    idx == 2 ? sortSlots(2) :
+    idx == 3 ? sortSlots(3) :
+    idx == 4 ? sortSlots(4) :
+    idx == 5 ? sortSlots(5) :
+    idx == 7 ? removeDups() :
+    idx == 8 ? removeNNotes(1) :
+    idx == 9 ? removeNNotes(2) :
+    idx == 10 ? removeNNotes(3) :
+    idx == 11 ? removeUnwatched() :
+    idx == 13 ? makeThird(3) :
+    idx == 14 ? makeThird(4) :
+    idx == 15 ? makeThird(5) :
+    idx == 17 ? transformPrevent() :
+    idx == 18 ? transformMatch() :
+    idx == 19 ? populateEmpty() :
+    idx == 21 ? (
+      s = 0;
+      while (s < 128) ( slotClear(s); s += 1; );
+    );
+  ) : mid == 2 ? applyChordPreset(idx) : applyArpPreset(idx);
+);
+
+function hitTest(x, y) local(i, cx, cy, p, bx, n) (
+  hitNote = -1;
+  hitLetter = -1;
+  hitCol = -1;
+  hitTab = -1;
+  hitPc = -1;
+  hitDeg = -1;
+  r = 0;
+  // top bar
+  inRect(x, y, 300, 5, 56, 16) ? r = 70 :
+  inRect(x, y, 390, 5, 56, 16) ? r = 71 :
+  inRect(x, y, 480, 5, 56, 16) ? r = 72 :
+  inRect(x, y, 562, 0, 44, 26) ? r = 2 :
+  inRect(x, y, 632, 0, 44, 26) ? r = 1 :
+  // pattern letters
+  (y >= 34 && y < 34 + 6*24 && x >= 8 && x < 8 + 2*54) ? (
+    hitLetter = floor((x - 8) / 54) + floor((y - 34) / 24) * 2;
+    hitLetter < 12 ? r = 41;
+  ) :
+  // graph edit buttons
+  inRect(x, y, 8, 186, 42, 15) ? r = 80 :
+  inRect(x, y, 54, 186, 42, 15) ? r = 81 :
+  inRect(x, y, 100, 186, 42, 15) ? r = 82 :
+  inRect(x, y, 34, 205, 26, 15) ? r = 5 :
+  // rate knob
+  ((x-26)*(x-26) + (y-246)*(y-246) <= 19*19) ? r = 3 :
+  inRect(x, y, 8, 292, 40, 14) ? r = 76 :
+  ((x-26)*(x-26) + (y-318)*(y-318) <= 11*11) ? r = 4 :
+  inRect(x, y, 8, 348, 48, 14) ? r = 73 :
+  inRect(x, y, 62, 348, 48, 14) ? r = 74 :
+  inRect(x, y, 116, 348, 54, 14) ? r = 75 :
+  inRect(x, y, 8, 366, 96, 16) ? r = 83 :
+  // tabs
+  (y >= 28 && y < 44 && x >= 178 && x < 178 + 8*76) ? (
+    hitTab = floor((x - 178) / 76);
+    hitTab < 8 ? r = 40;
+  ) :
+  // length line
+  (x >= 178 && x < 850 && y >= 48 && y < 344 && abs(x - (178 + lenG[pat*8+curGraph]*42)) <= 6) ? r = 7 :
+  // grid cells
+  (x >= 178 && x < 850 && y >= 48 && y < 344) ? (
+    hitCol = floor((x - 178) / 42);
+    hitCol < 16 ? r = 6;
+  ) :
+  // mutes (note tab)
+  (curGraph == 0 && y >= 348 && y < 364 && x >= 178 && x < 850) ? (
+    hitCol = floor((x - 178) / 42);
+    hitCol < 16 ? r = 92;
+  ) :
+  // constraint keys
+  (x >= 858 && x < 888 && y >= 48 && y < 48 + 12*21) ? (
+    hitPc = floor((y - 48) / 21);
+    hitPc < 12 ? r = 90;
+  ) :
+  // pitch enables
+  (curGraph == 3 && x >= 894 && x < 916 && y >= 48 && y < 48 + 7*15) ? (
+    hitDeg = floor((y - 48) / 15);
+    hitDeg < 7 ? r = 91;
+  ) :
+  // chord buttons
+  inRect(x, y, 8, 474, 64, 16) ? r = 65 :
+  inRect(x, y, 78, 474, 64, 16) ? r = 66 :
+  inRect(x, y, 8, 496, 46, 15) ? r = 60 :
+  inRect(x, y, 58, 496, 46, 15) ? r = 61 :
+  inRect(x, y, 108, 496, 46, 15) ? r = 62 :
+  inRect(x, y, 158, 496, 46, 15) ? r = 63 :
+  inRect(x, y, 208, 496, 24, 15) ? r = 64 :
+  // voices
+  (y >= 520 && y < 588 && x >= 8 && x < 8 + 8*30) ? (
+    i = floor((x - 8) / 30);
+    y < 544 ? r = 10 + i :
+    y < 566 ? r = 20 + i :
+    y < 584 ? r = 30 + i;
+  ) :
+  // octave scroll
+  inRect(x, y, 230, 400, 16, 14) ? r = 52 :
+  inRect(x, y, 302, 400, 16, 14) ? r = 53 :
+  // piano keys + blips
+  (y >= 420 && y < 590 && x >= 230 && x < 923) ? (
+    // black keys first
+    n = -1;
+    o = 0;
+    while (o < 3 && n < 0) (
+      w = 0;
+      while (w < 6 && n < 0) (
+        wo = w == 0 ? 0 : w == 1 ? 2 : w == 2 ? 4 : w == 3 ? 5 : w == 4 ? 7 : w == 5 ? 9 : 11;
+        won = w == 0 ? 0 : w == 1 ? 2 : w == 2 ? 4 : w == 3 ? 5 : w == 4 ? 7 : w == 5 ? 9 : 11;
+        won2 = w == 0 ? 2 : w == 1 ? 4 : w == 2 ? 5 : w == 3 ? 7 : w == 4 ? 9 : w == 5 ? 11 : 12;
+        won2 - won == 2 ? (
+          bx = 230 + (o*7 + w)*33 + 24;
+          y < 526 && inRect(x, y, bx, 430, 18, 96) ? n = keyScroll*12 + o*12 + won + 1;
+        );
+        w += 1;
+      );
+      o += 1;
+    );
+    o = 0;
+    while (o < 3 && n < 0) (
+      w = 0;
+      while (w < 7 && n < 0) (
+        won = w == 0 ? 0 : w == 1 ? 2 : w == 2 ? 4 : w == 3 ? 5 : w == 4 ? 7 : w == 5 ? 9 : 11;
+        bx = 230 + (o*7 + w)*33;
+        inRect(x, y, bx, 420, 33, 170) ? n = keyScroll*12 + o*12 + won;
+        w += 1;
+      );
+      o += 1;
+    );
+    n >= 0 ? ( hitNote = n; r = 50; );
+  );
+  r;
+);
+
+// ---- initialization ----
+
+chN   = 0;    // 128*8  chord notes (-1 = off)
+chV   = 1024; // 128*8  velocity scale 0..200
+lkOn  = 2048; // 8
+lkN   = 2056; // 8
+notG  = 2064; // 12*16 note sel graph
+rndG  = 2256; // 12*16 rand sel
+octG  = 2448; // 12*16 octave
+pitG  = 2640; // 12*16 pitch
+velG  = 2832; // 12*16 velocity
+gatG  = 3024; // 12*16 gate
+latG  = 3216; // 12*16 late
+harG  = 3408; // 12*16 harmony
+resG  = 3600; // 12*16 reset arrows
+mutG  = 3792; // 12     step mute bitmasks
+lenG  = 3804; // 12*8   lane lengths
+cdvG  = 3900; // 12*8   clock divs
+ratG  = 3996; // 12     rate index
+retG  = 4008; // 12     retrigger
+chmG  = 4020; // 12     chord mode
+lnkG  = 4032; // 12     link lengths
+conG  = 4044; // 12     note constraints
+penG  = 4056; // 7      pitch enables
+watB  = 4063; // 128    watched slots
+MEMLEN = 4224;
+
+// runtime (not serialized)
+inN   = 5000; // 128 input held counts
+actR  = 5128; // 128 active chord output counts
+actL  = 5256; // 8 active chord notes
+sndN  = 5264; // 16
+sndC  = 5280; // 16
+sndO  = 5296; // 16
+tvN   = 5312; // 16 test tone voices
+tvV   = 5328;
+tvP   = 5344;
+tvT   = 5360;
+tvE   = 5376;
+helB  = 5392; // 128 arp held pitches
+oB    = 5520; // 32 output note list
+keyB  = 5552; // 128
+sortB = 5680; // 128
+sortT = 5808; // 2048
+gcp   = 7856; // 16
+pw2   = 7872; // 16
+bkdB  = 7888; // 16
+lrnB  = 7904; // 8
+pcsB  = 7912; // 8
+prvN  = 7920; // 8
+prvC  = 7928; // 8
+prvT  = 7936; // 8
+ccb   = 7944; // 16  chord copy buffer
+
+// pw2 table
+i = 0;
+p = 1;
+while (i < 16) (
+  pw2[i] = p;
+  p *= 2;
+  i += 1;
+);
+
+// globals / defaults
+chOn = 1;
+arpOn = 1;
+trans = 0;
+latch = 0;
+tone = 0;
+curSlot = 48;
+pat = 0;
+curGraph = 0;
+activeSlot = -1;
+actCnt = 0;
+actCh = 0;
+arpCnt = 0;
+arpRoot = 0;
+sndCnt = 0;
+lastInVel = 100;
+lastInChan = 0;
+outChan = 0;
+lastOutNote = -1;
+shapePos = 0;
+trigBase = 0;
+nextStep = 0;
+lastFired = -1;
+wantRetrig = 0;
+wantSilence = 0;
+arpDirty = 0;
+prevPlay = 0;
+lastBeatPos = 0;
+lastTime = 0;
+blkBeat = 0;
+blkTime = 0;
+bps = 0;
+L = 0.25;
+synced = 1;
+freeOn = 0;
+freeHz = 8;
+lrn = 0;
+lrnMode = 0;
+lrnTimer = 0;
+lrnCnt = 0;
+lrnHeld = 0;
+lrnOffs = 0;
+lrnT0 = 0;
+learnGap = 0.008 * srate;
+watchOn = 0;
+prvCnt = 0;
+dragCtl = 0;
+dragV0 = 0;
+dragMy0 = 0;
+dragCol = 0;
+dragTab = 0;
+dragPatFrom = -1;
+dragVoice = -1;
+keyScroll = 0;
+hitNote = 0;
+hitLetter = -1;
+menuOpen = 0;
+mousePrev = 0;
+smpi = 0;
+i = 0;
+while (i < 16) (
+  tvN[i] = -1;
+  tvV[i] = 0;
+  tvP[i] = 0;
+  tvT[i] = 0;
+  tvE[i] = 0;
+  i += 1;
+);
+
+// factory: minor triads on all slots (like the original's default)
+s = 0;
+while (s < 128) (
+  v = 0;
+  while (v < 8) (
+    chN[s*8+v] = -1;
+    chV[s*8+v] = 100;
+    v += 1;
+  );
+  root = s + 7 > 127 && s >= 12 ? s - 12 : s;
+  chN[s*8+0] = root;
+  chN[s*8+1] = root + 3;
+  chN[s*8+2] = root + 7;
+  s += 1;
+);
+s = 0;
+while (s < 128) (
+  watB[s] = 1;
+  inN[s] = 0;
+  actR[s] = 0;
+  s += 1;
+);
+
+// factory arp: pattern A = up 16ths, others empty
+p = 0;
+while (p < 12) (
+  arpPatternDefaults(p);
+  p += 1;
+);
+i = 0;
+while (i < 16) (
+  notG[0*16+i] = 8;
+  i += 1;
+);
+
+// ============================================================================
+// @slider
+// ============================================================================
+@slider
+chOn = slider1;
+arpOn = slider2;
+trans = slider3;
+latch = slider4;
+tone = slider5;
+
+// ============================================================================
+// @block
+// ============================================================================
+@block
+smpi = 0;
+blkBeat = beat_position;
+blkTime = play_position;
+bps = tempo > 0 ? tempo / (60 * srate) : 120 / (60 * srate);
+
+// step length
+rateB = 0;
+i = ratG[pat];
+rateB = i <= 4 ? 64 / pw2[i] : i == 5 ? 2 : 1 / pw2[i-6];
+cdv = max(1, cdvG[pat*8 + curGraph]);
+L = synced ? rateB * cdv : cdv / max(0.05, freeHz);
+lenN  = max(1, lenG[pat*8+0]);
+lenR  = max(1, lenG[pat*8+1]);
+lenO  = max(1, lenG[pat*8+2]);
+lenP  = max(1, lenG[pat*8+3]);
+lenV  = max(1, lenG[pat*8+4]);
+lenG2 = max(1, lenG[pat*8+5]);
+lateLen = max(1, lenG[pat*8+6]);
+lenH  = max(1, lenG[pat*8+7]);
+
+pl = play_state & 1;
+pl && !prevPlay ? (
+  // transport started: restart pattern from step 0 here
+  trigBase = synced ? blkBeat : blkTime;
+  nextStep = 0;
+  lastFired = -1;
+  shapePos = 0;
+);
+!pl && prevPlay ? silenceAll();
+prevPlay = pl;
+
+pl ? (
+  // seek detection
+  jump = synced ? abs(blkBeat - lastBeatPos) : abs(blkTime - lastTime);
+  jump > max(L * 2, 0.5) ? (
+    synced ? (
+      trigBase = 0;
+      nextStep = floor(blkBeat / max(L, 0.0001));
+    ) : (
+      nextStep = floor((blkTime - trigBase) / max(L, 0.0001));
+    );
+    lastFired = nextStep - 1;
+    shapePos = 0;
+    silenceAll();
+  );
+);
+lastBeatPos = blkBeat;
+lastTime = blkTime;
+
+// ---- MIDI input ----
+while (midirecv(offs, m1, m2, m3)) (
+  st = m1 & 0xF0;
+  ch = m1 & 0x0F;
+  d1 = m2 & 0x7F;
+  d2 = m3 & 0x7F;
+  st == 0x90 && d2 > 0 ? inputNoteOn(d1, d2, ch, offs) :
+  st == 0x80 || st == 0x90 ? inputNoteOff(d1, ch, offs) :
+  midisend(offs, m1, m2, m3);
+);
+
+// arp held rebuild + preview note-offs
+arpDirty ? ( rebuildArp(); arpDirty = 0; );
+previewOffs();
+
+// ============================================================================
+// @sample
+// ============================================================================
+@sample
+wantSilence ? ( silenceAll(); wantSilence = 0; );
+
+playing = play_state & 1;
+playing ? (
+  now = synced ? blkBeat + smpi * bps : blkTime + smpi / srate;
+  wantRetrig ? (
+    wantRetrig = 0;
+    silenceAll();
+    shapePos = 0;
+    trigBase = now - lateFrac(0) * L;
+    nextStep = 0;
+    lastFired = -1;
+  );
+  s = nextStep;
+  guard = 0;
+  while (now >= trigOf(s) && guard < 64) (
+    arpFire(s);
+    s += 1;
+    guard += 1;
+  );
+  nextStep = s;
+  // gate note-offs
+  i = 0;
+  while (i < sndCnt) (
+    now >= sndO[i] ? (
+      sendOff(0, sndC[i], sndN[i]);
+      sndN[i] = sndN[sndCnt-1];
+      sndC[i] = sndC[sndCnt-1];
+      sndO[i] = sndO[sndCnt-1];
+      sndCnt -= 1;
+    ) : ( i += 1; );
+  );
+);
+
+// ---- test tone ----
+tone > 0 ? (
+  sum = 0;
+  i = 0;
+  while (i < 16) (
+    tvN[i] >= 0 ? (
+      f = 440 * exp((tvN[i] - 69) * log(2) / 12);
+      tvP[i] += f / srate;
+      tvP[i] >= 1 ? tvP[i] -= 1;
+      k = tvT[i] > tvE[i] ? 0.2 : 1 / (0.04 * srate);
+      tvE[i] += (tvT[i] - tvE[i]) * k;
+      sum += (2 * tvP[i] - 1) * tvE[i];
+      tvT[i] == 0 && tvE[i] < 0.001 ? tvN[i] = -1;
+    );
+    i += 1;
+  );
+  spl0 += sum * 0.15;
+  spl1 += sum * 0.15;
+);
+
+smpi += 1;
+
+// ============================================================================
+// @serialize
+// ============================================================================
+@serialize
+file_avail(0) > 8 ? (
+  file_var(0, magic);
+  file_var(0, ver);
+  magic == 0x41535078 && ver == 1 ? (
+    file_mem(0, 0, MEMLEN);
+    file_var(0, trans);
+    file_var(0, curSlot);
+    file_var(0, pat);
+    file_var(0, curGraph);
+    file_var(0, freeOn);
+    file_var(0, freeHz);
+    file_var(0, watchOn);
+    synced = freeOn ? 0 : 1;
+    arpDirty = 1;
+  );
+) : (
+  file_var(0, 0x41535078);
+  file_var(0, 1);
+  file_mem(0, 0, MEMLEN);
+  file_var(0, trans);
+  file_var(0, curSlot);
+  file_var(0, pat);
+  file_var(0, curGraph);
+  file_var(0, freeOn);
+  file_var(0, freeHz);
+  file_var(0, watchOn);
+);
+
