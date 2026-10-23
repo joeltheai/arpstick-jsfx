@@ -17,7 +17,7 @@ function trace_measure(s,w,h) (w=strlen(s)*trace_size*0.54; h=trace_size;);
 function trace_text(fmt,s) (printf("TEXT %.3f %.3f %.3f %.3f %.3f %.3f %s\\n",gfx_x,gfx_y,trace_size,gfx_r,gfx_g,gfx_b,s););
 '''
 
-def render(binary, output, lane=0):
+def render(binary, output, lane=0, width=1152, height=768):
     code = preprocess(PLUGIN.read_text())
     for name in ('rect','line','circle','setfont','measurestr','printf'):
         target={'setfont':'font','measurestr':'measure','printf':'text'}.get(name,name)
@@ -25,15 +25,15 @@ def render(binary, output, lane=0):
     # EEL helpers have fixed argument counts; gfx_line's optional AA defaults to 1.
     import re
     code=re.sub(r'trace_line\(([^;\n]+)\)',lambda m:'trace_line('+m[1]+(',1' if m[1].count(',')==3 else '')+')',code)
-    code=code.replace('trace_measure(s, w, h);','w=strlen(s)*trace_size*0.54; h=trace_size;')
-    code=WRAPPERS+code+f'\ngfx_w=1152; gfx_h=768; curGraph={lane}; mouse_x=-1; mouse_y=-1; __gfx();\n'
+    code=code.replace('trace_measure(s, w, h);','w=strlen(s)*trace_size*0.54; h=trace_size;').replace('trace_measure(lab,tw,th);','tw=strlen(lab)*trace_size*0.54; th=trace_size;')
+    code=WRAPPERS+code+f'\ngfx_w={width}; gfx_h={height}; curGraph={lane}; mouse_x=-1; mouse_y=-1; __gfx();\n'
     import tempfile
     with tempfile.NamedTemporaryFile('w',suffix='.eel') as f:
         f.write(code);f.flush()
         result=subprocess.run([binary,f.name],capture_output=True,text=True,check=True)
     if 'syntax error' in result.stderr or 'syntax error' in result.stdout:
         raise RuntimeError(result.stdout+result.stderr)
-    svg=['<svg xmlns="http://www.w3.org/2000/svg" width="1152" height="768" viewBox="0 0 1152 768">']
+    svg=[f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">']
     def color(vals):return 'rgb('+','.join(str(round(max(0,min(1,float(x)))*255)) for x in vals)+')'
     for line in result.stdout.splitlines():
         parts=line.split(' ')
@@ -48,4 +48,4 @@ def render(binary, output, lane=0):
     svg.append('</svg>'); Path(output).write_text('\n'.join(svg))
 
 if __name__=='__main__':
-    ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('binary');ap.add_argument('output');ap.add_argument('--lane',type=int,default=0);a=ap.parse_args();render(a.binary,a.output,a.lane)
+    ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('binary');ap.add_argument('output');ap.add_argument('--lane',type=int,default=0);ap.add_argument('--width',type=int,default=1152);ap.add_argument('--height',type=int,default=768);a=ap.parse_args();render(a.binary,a.output,a.lane,a.width,a.height)
