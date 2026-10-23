@@ -54,3 +54,17 @@ pitches and velocities) so the expected output can be diffed by eye.
   round-trip-tested.
 - `time_precise()` returns 0 unless driven, which only affects timer-based
   learn mode in the regression tests.
+
+## Automated assertions and layout rendering
+
+    python3 tools/test.py /path/to/loose_eel
+    python3 tools/render_gui.py /path/to/loose_eel docs/arpstick.svg
+    rsvg-convert docs/arpstick.svg -o docs/arpstick.png
+
+`test.py` fails on EEL compilation errors, failed engine assertions or incorrect
+MIDI pitches, velocities and offsets. `render_gui.py` runs the plugin's actual
+GUI function through EEL2, tracing rectangles, lines, circles and text into SVG.
+Text metrics are approximated, so the preview supplements real REAPER testing.
+The preprocessor supports sized @gfx sections and preserves slider assignments.
+
+The MIDI importer is `import_midi_chords.lua`; see the root README for setup.

@@ -1,1 +1,3 @@
-# arpstick-jsfx
+# ArpStick
+
+![ArpStick](docs/arpstick.png)
