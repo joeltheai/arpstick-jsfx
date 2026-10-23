@@ -26,14 +26,14 @@ desc:ArpStick — Chord Player & Pattern Arpeggiator (MIDI FX)
 //   - Note-block keys (right of arp grid) cycle: pass / block / block+up /
 //     block+down. Pitch-enable buttons 1-7 appear for the Pitch lane.
 
-slider1:1<0,1,1{Off,On}>Chord Module
-slider2:1<0,1,1{Off,On}>Arp Module
-slider3:0<-36,36,1>Chord Transpose
-slider4:0<0,1,1{Off,On}>MIDI Latch
-slider5:0<0,100,1>Test Tone
-slider6:0<0,16,1{Input,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}>Output Channel
-slider7:0<0,1,1{Off,On}>MIDI Remote (Ch 2/3)
-slider8:0<0,11,1{A,B,C,D,E,F,G,H,I,J,K,L}>Pattern
+slider1:1<0,1,1{Off,On}>-Chord Module
+slider2:1<0,1,1{Off,On}>-Arp Module
+slider3:0<-36,36,1>-Chord Transpose
+slider4:0<0,1,1{Off,On}>-MIDI Latch
+slider5:0<0,100,1>-Test Tone
+slider6:0<0,16,1{Input,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}>-Output Channel
+slider7:0<0,1,1{Off,On}>-MIDI Remote (Ch 2/3)
+slider8:0<0,11,1{A,B,C,D,E,F,G,H,I,J,K,L}>-Pattern
 options:no_denormals
 options:gmem=ArpStickImport
 
@@ -1363,6 +1363,8 @@ function hitTest(x, y) local(i, cx, cy, p, bx, n,r,o,w,wo,won,won2) (
   inRect(x,y,8,168,155,16) ? r=98 :
   inRect(x,y,74,232,64,46) ? r=96 :
   // top bar
+  inRect(x,y,710,5,112,16) ? r=99 :
+  inRect(x,y,830,5,122,16) ? r=100 :
   inRect(x, y, 300, 5, 56, 16) ? r = 70 :
   inRect(x, y, 390, 5, 56, 16) ? r = 71 :
   inRect(x, y, 480, 5, 56, 16) ? r = 72 :
@@ -1514,6 +1516,8 @@ mouse_cap & 1 ? (
       id2 = hitTest(mx, my);
       id2 == 40 ? curGraph = hitTab :
       id2 == 41 ? ( pat = hitLetter; slider8=pat; dragPatFrom = hitLetter; dragCtl = 41; ) :
+      id2 == 99 ? slider6=(slider6+1)%17 :
+      id2 == 100 ? slider7=1-slider7 :
       id2 == 95 ? panicRequest=1 :
       id2 == 97 ? importRequest=1 :
       id2 == 98 ? (nameEditing=1; nameLen=0; while(nameLen<23 && patNames[pat*24+nameLen]>0) (nameLen+=1;);) :
@@ -1679,6 +1683,10 @@ knob(665, 13, 10, trans, -36, 36);
 drwText(#ts, 674, 6, 8, 200, 205, 215);
 #ts = sprintf(#, "%d%%", floor(tone));
 drwText(#ts, 594, 6, 8, 200, 205, 215);
+
+#channelLabel = slider6==0 ? "OUT: INPUT" : sprintf(#,"OUT: CH %d",slider6);
+btn(710,5,112,16,#channelLabel,slider6>0,100,205,120);
+btn(830,5,122,16,slider7 ? "MIDI REMOTE: ON" : "MIDI REMOTE: OFF",slider7,100,205,120);
 
 // ---------- arp section ----------
 frect(px(0), py(26), 960*sc, 364*sc, 20, 23, 29);
