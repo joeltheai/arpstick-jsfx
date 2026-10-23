@@ -1,0 +1,241 @@
+// ============================================================================
+// ArpStick regression driver
+// Runs in the patched loose_eel harness (see tools/README.md).
+// The plugin's @init already ran at load; sections are callable as functions.
+// ============================================================================
+
+__slider();
+
+printf("T1: chord module - note-on C3 (factory minor triad)\n");
+slider1 = 1; slider2 = 0; __slider();
+push_midi(0, 0x90, 48, 100);
+__block();
+dump_midi();          // expect: on 48, 51, 55 @100
+push_midi(0, 0x80, 48, 0);
+__block();
+dump_midi();          // expect: off 48, 51, 55
+
+printf("T3: per-voice velocity scaling [200,50,100] at input v64\n");
+chV[48*8+0] = 200; chV[48*8+1] = 50; chV[48*8+2] = 100;
+push_midi(0, 0x90, 48, 64);
+__block();
+dump_midi();          // expect: 127, 32, 64
+push_midi(0, 0x80, 48, 0);
+__block();
+dump_midi();
+
+printf("T4: voice lock (pedal tone) on voice 2\n");
+lkOn[1] = 1; lkN[1] = 40;
+push_midi(0, 0x90, 48, 100);
+__block();
+dump_midi();          // expect: 48, 40, 55
+push_midi(0, 0x80, 48, 0);
+__block();
+dump_midi();
+lkOn[1] = 0;
+
+printf("T5: global transpose +7\n");
+trans = 7;
+push_midi(0, 0x90, 48, 100);
+__block();
+dump_midi();          // expect: 55, 58, 62
+push_midi(0, 0x80, 48, 0);
+__block();
+dump_midi();
+trans = 0;
+
+printf("T6: arp 'up' 16ths over C-E-G, 8 steps @120bpm\n");
+slider1 = 0; slider2 = 1; __slider();
+push_midi(0, 0x90, 48, 100);
+push_midi(0, 0x90, 52, 100);
+push_midi(0, 0x90, 55, 100);
+__block();
+tempo = 120; srate = 44100; samplesblock = 1;
+play_state = 1; beat_position = 0;
+k = 0;
+while (k < 8) (
+  beat_position = k * 0.25;
+  __block();
+  __sample();
+  dump_midi();        // expect: 48, 52, 55, 60, 64, 67, 72, 76
+  k += 1;
+);
+push_midi(0, 0x80, 48, 0);
+push_midi(0, 0x80, 52, 0);
+push_midi(0, 0x80, 55, 0);
+__block();
+__sample();
+dump_midi();          // expect: off for last sounding note
+
+printf("T8: chord mode - inversions per step (steps = notes 1,2,3)\n");
+chmG[0] = 1;
+k = 0;
+while (k < 16) ( notG[k] = -1; k += 1; );
+notG[0] = 0; notG[1] = 1; notG[2] = 2;
+lenG[0*8+0] = 3;
+push_midi(0, 0x90, 48, 100);
+push_midi(0, 0x90, 52, 100);
+push_midi(0, 0x90, 55, 100);
+__block();
+play_state = 1; beat_position = 100;
+__block();
+k = 0;
+while (k < 3) (
+  beat_position = 100 + k * 0.25;
+  __block();
+  __sample();
+  dump_midi();        // expect: 52,55,60 / 55,60,64 / 48,52,55
+  k += 1;
+);
+push_midi(0, 0x80, 48, 0);
+push_midi(0, 0x80, 52, 0);
+push_midi(0, 0x80, 55, 0);
+__block();
+__sample();
+dump_midi();
+chmG[0] = 0;
+k = 0;
+while (k < 16) ( notG[k] = 8; k += 1; );
+lenG[0*8+0] = 16;
+
+printf("T9: gate 50%% shortens the step\n");
+k = 0;
+while (k < 16) ( gatG[k] = 50; k += 1; );
+push_midi(0, 0x90, 48, 100);
+push_midi(0, 0x90, 52, 100);
+push_midi(0, 0x90, 55, 100);
+__block();
+play_state = 1; beat_position = 200;
+__block();
+__sample();
+dump_midi();          // expect: on (any pitch)
+beat_position = 200.125;
+__block();
+__sample();
+dump_midi();          // expect: off (gate 50% of a 16th)
+push_midi(0, 0x80, 48, 0);
+push_midi(0, 0x80, 52, 0);
+push_midi(0, 0x80, 55, 0);
+__block();
+__sample();
+dump_midi();
+k = 0;
+while (k < 16) ( gatG[k] = 100; k += 1; );
+
+printf("T10: learn mode - record chord, advance slot\n");
+lrn = 1; lrnMode = 1; lrnCnt = 0; lrnHeld = 0;
+curSlot = 60;
+push_midi(0, 0x90, 60, 100);
+push_midi(0, 0x90, 64, 100);
+push_midi(0, 0x90, 67, 100);
+__block();
+push_midi(0, 0x80, 60, 0);
+push_midi(0, 0x80, 64, 0);
+push_midi(0, 0x80, 67, 0);
+__block();
+printf("  slot60 = [%d,%d,%d] curSlot=%d (expect 60,64,67 / 61)\n",
+       chN[60*8], chN[60*8+1], chN[60*8+2], curSlot);
+lrn = 0; lrnMode = 0;
+
+printf("T13: note constraint - block C then shift up\n");
+conG[0] = 1;
+push_midi(0, 0x90, 48, 100);
+__block();
+play_state = 1; beat_position = 300;
+__block();
+__sample();
+dump_midi();          // expect: nothing (C blocked)
+push_midi(0, 0x80, 48, 0);
+__block(); __sample();
+conG[0] = 2;
+push_midi(0, 0x90, 48, 100);
+__block();
+play_state = 1; beat_position = 301;
+__block();
+__sample();
+dump_midi();          // expect: 49 (block -> up)
+push_midi(0, 0x80, 48, 0);
+__block(); __sample();
+conG[0] = 0;
+
+printf("T14: octave lane +1 on step 0\n");
+octG[0*16+0] = 1;
+push_midi(0, 0x90, 60, 100);
+__block();
+play_state = 1; beat_position = 400;
+__block();
+__sample();
+dump_midi();          // expect: 72
+push_midi(0, 0x80, 60, 0);
+__block(); __sample();
+octG[0*16+0] = 0;
+
+printf("T15: harmony lane +7 on step 0\n");
+harG[0*16+0] = 7;
+push_midi(0, 0x90, 60, 100);
+__block();
+play_state = 1; beat_position = 500;
+__block();
+__sample();
+dump_midi();          // expect: 60 and 67
+push_midi(0, 0x80, 60, 0);
+__block(); __sample();
+harG[0*16+0] = 0;
+
+printf("T18: down shape + reset arrow at step 2\n");
+k = 0;
+while (k < 16) ( notG[k] = 9; k += 1; );
+resG[0*16+2] = 1;
+push_midi(0, 0x90, 48, 100);
+push_midi(0, 0x90, 52, 100);
+push_midi(0, 0x90, 55, 100);
+__block();
+play_state = 1; beat_position = 800;
+__block();
+k = 0;
+while (k < 4) (
+  beat_position = 800 + k * 0.25;
+  __block();
+  __sample();
+  dump_midi();        // expect: 55, 52, 55 (reset), 52
+  k += 1;
+);
+push_midi(0, 0x80, 48, 0);
+push_midi(0, 0x80, 52, 0);
+push_midi(0, 0x80, 55, 0);
+__block(); __sample();
+resG[0*16+2] = 0;
+k = 0;
+while (k < 16) ( notG[k] = 8; k += 1; );
+
+printf("T19: sort chords by low note\n");
+s = 0;
+while (s < 128) ( slotClear(s); s += 1; );
+chN[5*8] = 60; chN[5*8+1] = 64; chN[5*8+2] = 67;
+chN[6*8] = 40; chN[6*8+1] = 44; chN[6*8+2] = 47;
+chN[7*8] = 50; chN[7*8+1] = 54; chN[7*8+2] = 57;
+sortSlots(0);
+printf("  slot0=[%d,%d,%d] slot1=[%d,%d,%d] slot2=[%d,%d,%d] (expect 40,50,60)\n",
+       chN[0], chN[1], chN[2], chN[8], chN[9], chN[10], chN[16], chN[17], chN[18]);
+
+printf("T20: major->minor, minor->major, suspend\n");
+chN[30*8] = 48; chN[30*8+1] = 52; chN[30*8+2] = 55;
+chN[31*8] = 48; chN[31*8+1] = 51; chN[31*8+2] = 55;
+makeThird(3);
+printf("  slot30 = [%d,%d,%d] (expect 48,51,55)\n", chN[30*8], chN[30*8+1], chN[30*8+2]);
+makeThird(4);
+printf("  slot31 = [%d,%d,%d] (expect 48,52,55)\n", chN[31*8], chN[31*8+1], chN[31*8+2]);
+makeThird(5);
+printf("  slot30 = [%d,%d,%d] (expect 48,53,55)\n", chN[30*8], chN[30*8+1], chN[30*8+2]);
+
+printf("T21: remove duplicate chords\n");
+chN[40*8] = 48; chN[40*8+1] = 52; chN[40*8+2] = 55;
+chN[41*8] = 55; chN[41*8+1] = 52; chN[41*8+2] = 48;  // same notes, reordered
+chN[42*8] = 60; chN[42*8+1] = 64;
+removeDups();
+cnt = 0;
+s = 0;
+while (s < 128) ( slotUsed(s) ? cnt += 1; s += 1; );
+printf("  used slots = %d (expect 7 - 1 dup = 6)\n", cnt);
+
+printf("TESTS DONE\n");

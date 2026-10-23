@@ -1,0 +1,57 @@
+diff --git a/WDL/eel2/loose_eel.cpp b/WDL/eel2/loose_eel.cpp
+index b41211c..378d8a4 100644
+--- a/WDL/eel2/loose_eel.cpp
++++ b/WDL/eel2/loose_eel.cpp
+@@ -28,6 +28,18 @@ static void writeToStandardError(const char *fmt, ...)
+ void NSEEL_HOSTSTUB_EnterMutex() { }
+ void NSEEL_HOSTSTUB_LeaveMutex() { }
+ 
++static EEL_F NSEEL_CGEN_CALL _jsfx_stub(void *opaque, INT_PTR np, EEL_F **parms) { return 0.0; }
++
++static EEL_F _midi_in[4096][4]; static int _midi_in_n=0;
++static EEL_F _midi_log[4096][4]; static int _midi_log_n=0;
++static EEL_F _time_now=0;
++static EEL_F NSEEL_CGEN_CALL _jsfx_midisend(void *o, INT_PTR np, EEL_F **p) { if (_midi_log_n<4096){ _midi_log[_midi_log_n][0]=(np>0?*p[0]:0); _midi_log[_midi_log_n][1]=(np>1?*p[1]:0); _midi_log[_midi_log_n][2]=(np>2?*p[2]:0); _midi_log[_midi_log_n][3]=(np>3?*p[3]:0); _midi_log_n++; } return 0.0; }
++static EEL_F NSEEL_CGEN_CALL _jsfx_midirecv(void *o, INT_PTR np, EEL_F **p) { if (_midi_in_n>0){ int i; for(i=0;i<4;i++) *p[i]=_midi_in[0][i]; memmove(_midi_in[0],_midi_in[1],sizeof(_midi_in[0])*(--_midi_in_n)); return 1.0; } return 0.0; }
++static EEL_F NSEEL_CGEN_CALL _jsfx_time(void *o, INT_PTR np, EEL_F **p) { return _time_now; }
++static EEL_F NSEEL_CGEN_CALL _jsfx_push(void *o, INT_PTR np, EEL_F **p) { if (_midi_in_n<4096){ _midi_in[_midi_in_n][0]=*p[0]; _midi_in[_midi_in_n][1]=*p[1]; _midi_in[_midi_in_n][2]=*p[2]; _midi_in[_midi_in_n][3]=*p[3]; _midi_in_n++; } return 0.0; }
++static EEL_F NSEEL_CGEN_CALL _jsfx_dump(void *o, INT_PTR np, EEL_F **p) { int i; for(i=0;i<_midi_log_n;i++) printf("MIDI %d: st=%d d1=%d d2=%d offs=%.1f\n", i, (int)_midi_log[i][1], (int)_midi_log[i][2], (int)_midi_log[i][3], _midi_log[i][0]); _midi_log_n=0; return 0.0; }
++extern void *NSEEL_PProc_THIS(void *data, int data_size, struct _compileContext *ctx);
++
+ 
+ int main(int argc, char **argv)
+ {
+@@ -73,6 +85,33 @@ int main(int argc, char **argv)
+   #endif
+ #endif
+ 
++
++  // JSFX-compat stubs for syntax checking
++  {
++    const char *names[] = {
++      "gfx_rect","gfx_line","gfx_circle","gfx_printf","gfx_setfont","gfx_measurestr",
++      "gfx_roundrect","gfx_arc","gfx_lineto","gfx_getchar","gfx_drawstr",
++      "midisend","midirecv","time_precise","file_var","file_mem","file_avail",
++      "gfx_deltablit","gfx_blit","gfx_blitext","gfx_transform","gfx_measuretxt",
++    };
++    NSEEL_addfunc_exparms("gfx_rect", 4, NSEEL_PProc_THIS, _jsfx_stub);
++    NSEEL_addfunc_varparm("gfx_line", 4, NSEEL_PProc_THIS, _jsfx_stub);
++    NSEEL_addfunc_exparms("gfx_circle", 5, NSEEL_PProc_THIS, _jsfx_stub);
++    NSEEL_addfunc_varparm("gfx_printf", 1, NSEEL_PProc_THIS, _jsfx_stub);
++    NSEEL_addfunc_exparms("gfx_setfont", 3, NSEEL_PProc_THIS, _jsfx_stub);
++    NSEEL_addfunc_exparms("gfx_measurestr", 3, NSEEL_PProc_THIS, _jsfx_stub);
++    NSEEL_addfunc_exparms("gfx_roundrect", 6, NSEEL_PProc_THIS, _jsfx_stub);
++    NSEEL_addfunc_exparms("gfx_arc", 7, NSEEL_PProc_THIS, _jsfx_stub);
++    NSEEL_addfunc_exparms("midisend", 4, NSEEL_PProc_THIS, _jsfx_midisend);
++    NSEEL_addfunc_exparms("midirecv", 4, NSEEL_PProc_THIS, _jsfx_midirecv);
++    NSEEL_addfunc_varparm("time_precise", 0, NSEEL_PProc_THIS, _jsfx_time);
++    NSEEL_addfunc_exparms("file_var", 2, NSEEL_PProc_THIS, _jsfx_stub);
++    NSEEL_addfunc_exparms("file_mem", 3, NSEEL_PProc_THIS, _jsfx_stub);
++    NSEEL_addfunc_exparms("file_avail", 1, NSEEL_PProc_THIS, _jsfx_stub);
++    NSEEL_addfunc_exparms("push_midi", 4, NSEEL_PProc_THIS, _jsfx_push);
++    NSEEL_addfunc_varparm("dump_midi", 0, NSEEL_PProc_THIS, _jsfx_dump);
++  }
++
+   WDL_FastString code,t;
+ 
+   eelScriptInst inst;
