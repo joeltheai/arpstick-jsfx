@@ -2121,7 +2121,7 @@ menuOpen ? (
 
 // Persistent footer keeps performance state and editing gestures visible.
 frect(px(0),py(602),960*sc,38*sc,13,17,23);
-drwText(freeOn ? "FREE CLOCK" : (play_state&1) ? "HOST SYNC / PLAYING" : "HOST SYNC / PRESS PLAY",12,609,10,108,215,177);
+drwText((play_state&1) ? (freeOn ? "FREE CLOCK" : "HOST SYNC / PLAYING") : "STOPPED / LIVE CLOCK",12,609,10,108,215,177);
 #info=sprintf(#,"%d held  /  %d voices  /  pattern %c",arpCnt,sndCnt,65+pat);
 drwText(#info,290,609,10,166,181,200);
 drwText("Drag: edit   Alt: reset   Shift: audition   Cmd/Ctrl: chord note",12,625,9,126,143,164);
@@ -2355,16 +2355,22 @@ importRequest ? (
 blkBeat = beat_position;
 blkTime = play_position;
 bps = tempo > 0 ? tempo / (60 * srate) : 120 / (60 * srate);
+pl = play_state & 1;
+// When the transport is stopped, use the plugin's free clock automatically.
+// This lets live MIDI input reach downstream instruments without requiring
+// the user to start REAPER. The FREE control still forces this clock while
+// transport is running.
+freeClock = freeOn || !pl;
 
 // step length
 rateB = 0;
 i = ratG[pat];
 rateB = i <= 4 ? 64 / pw2[i] : i == 5 ? 2 : 1 / pw2[i-6];
 cdv = 1; // Lane divisions are independent of the visible editor tab.
-synced = freeOn ? 0 : 1;
+synced = freeClock ? 0 : 1;
 L = synced ? rateB * cdv : cdv / max(0.05, freeHz);
-(freeOn!=prevFree || pat!=prevPattern || abs(L-prevLength)>0.000001) ? wantRetrig=1;
-prevFree=freeOn; prevPattern=pat; prevLength=L;
+(freeClock!=prevFree || pat!=prevPattern || abs(L-prevLength)>0.000001) ? wantRetrig=1;
+prevFree=freeClock; prevPattern=pat; prevLength=L;
 lenN  = max(1, lenG[pat*8+0]);
 lenR  = max(1, lenG[pat*8+1]);
 lenO  = max(1, lenG[pat*8+2]);
@@ -2374,7 +2380,6 @@ lenG2 = max(1, lenG[pat*8+5]);
 lateLen = max(1, lenG[pat*8+6]);
 lenH  = max(1, lenG[pat*8+7]);
 
-pl = play_state & 1;
 pl && !prevPlay ? (
   // transport started: restart pattern from step 0 here
   trigBase = synced ? blkBeat : sampleClock/srate;
@@ -2382,7 +2387,7 @@ pl && !prevPlay ? (
   lastFired = -1;
   shapePos = 0;
 );
-!pl && prevPlay && !freeOn ? silenceAll();
+!pl && prevPlay ? wantRetrig=1;
 prevPlay = pl;
 
 pl && synced ? (
@@ -2443,7 +2448,7 @@ while(evRead<evCount && evQ[evRead*4]<=smpi) (
 arpDirty ? (rebuildArp(); arpDirty=0;);
 wantSilence ? ( silenceAll(); wantSilence = 0; );
 
-playing = (play_state & 1) || freeOn;
+playing = (play_state & 1) || freeClock;
 playing && arpOn ? (
   now = synced ? blkBeat + smpi * bps : sampleClock / srate;
   wantRetrig ? (
