@@ -83,11 +83,16 @@ col=0; while(col<16) (notG[col]=8; col+=1;);
 rootIndex=0; progressionOK=1;
 while(rootIndex<4) (
   progressionRoot=rootIndex==0 ? 48 : rootIndex==1 ? 53 : rootIndex==2 ? 55 : 45;
+  // expected chord notes from the C major diatonic bank (preset 0)
+  rootIndex==0 ? (a1=48; a2=52; a3=55) :
+  rootIndex==1 ? (a1=53; a2=57; a3=60) :
+  rootIndex==2 ? (a1=55; a2=59; a3=62) :
+  (a1=45; a2=48; a3=52);
   push_midi(0,144,progressionRoot,100);
   step=0;
   while(step<48) (
     beat_position=(rootIndex*48+step)*0.25; blockRun(1);
-    (lastOutNote!=progressionRoot && lastOutNote!=progressionRoot+3 && lastOutNote!=progressionRoot+7) ? progressionOK=0;
+    (lastOutNote!=a1 && lastOutNote!=a2 && lastOutNote!=a3) ? progressionOK=0;
     step+=1;
   );
   push_midi(0,128,progressionRoot,0); blockRun(1);
